@@ -7,6 +7,7 @@ from PyQt6.QtCore import QDateTime, QSettings, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QProgressBar,
@@ -19,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ai_worker import AIWorker
-from database import DatabaseManager, init_db, lookup_word, save_to_personal_dict
+from database import DatabaseManager, get_personal_note, lookup_word, save_to_personal_dict
 from flow_layout import FlowLayout
 from processor import TextProcessor
 from style import DARK_STYLE
@@ -111,12 +112,20 @@ class YomikataApp(QMainWindow):
         ai_controls_layout.addWidget(self.ai_btn, stretch=4)  # Takes up most space
         ai_controls_layout.addWidget(self.settings_btn, stretch=1)  # The little gear
 
-        self.save_ai_btn = QPushButton("Save AI Explanation to Personal Dict")
+        self.save_ai_btn = QPushButton("Save AI to Personal Dict")
         self.save_ai_btn.setIcon(qta.icon("fa5s.save", color="white"))
         self.save_ai_btn.clicked.connect(self.save_ai_to_dict)
         self.save_ai_btn.setVisible(False)  # Hide it until AI responds
         self.save_ai_btn.setStyleSheet(
             "background-color: #2e7d32; color: white; padding: 8px;"
+        )
+
+        self.edit_note_btn = QPushButton("Edit Note")
+        self.edit_note_btn.setIcon(qta.icon("fa5s.edit", color="white"))
+        self.edit_note_btn.clicked.connect(self.edit_note)
+        self.edit_note_btn.setEnabled(False)
+        self.edit_note_btn.setStyleSheet(
+            "background-color: #455a64; color: white; padding: 8px;"
         )
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # Indeterminate "pulser"
@@ -129,7 +138,13 @@ class YomikataApp(QMainWindow):
         right_layout.addWidget(QLabel("<b>DICTIONARY REVEAL</b>"))
         right_layout.addWidget(self.dict_display)
         right_layout.addLayout(ai_controls_layout)
-        right_layout.addWidget(self.save_ai_btn)
+
+        # Note buttons row
+        note_btn_layout = QHBoxLayout()
+        note_btn_layout.addWidget(self.save_ai_btn)
+        note_btn_layout.addWidget(self.edit_note_btn)
+        right_layout.addLayout(note_btn_layout)
+
         right_layout.addWidget(self.progress_bar)
 
         self.splitter.addWidget(left_container)
@@ -205,6 +220,28 @@ class YomikataApp(QMainWindow):
             )
             self.save_ai_btn.setVisible(False)
 
+    def edit_note(self):
+        """Open a dialog to manually edit the personal note for the selected word."""
+        if not self.selection_list:
+            return
+
+        combined_surface = "".join([t["surface"] for t in self.selection_list])
+
+        # Get existing note if any
+        existing = get_personal_note(combined_surface)
+
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Edit Personal Note",
+            f"Note for '{combined_surface}' (Markdown supported):",
+            existing or ""
+        )
+        if ok and text:
+            save_to_personal_dict(combined_surface, text)
+            self.dict_display.append(
+                f"<br><i style='color:#4caf50;'>✓ Note saved for '{combined_surface}'</i>"
+            )
+            self.update_dictionary_view()
+
     def log_debug(self, message):
         timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
         self.debug_logs.append(f"[{timestamp}] {message}")
@@ -262,6 +299,7 @@ class YomikataApp(QMainWindow):
         html = markdown.markdown(markdown_text, extensions=["extra"])
         self.dict_display.setHtml(self.apply_custom_css(html))
         self.ai_btn.setEnabled(True)
+        self.edit_note_btn.setEnabled(True)
 
     def apply_custom_css(self, html):
         return f"""

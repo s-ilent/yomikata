@@ -1,8 +1,9 @@
 import re
 import sys
 
+import markdown
 import qtawesome as qta
-from PyQt6.QtCore import QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import QDateTime, QPoint, QRect, QSettings, QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -13,9 +14,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -64,10 +67,16 @@ DARK_STYLE = """
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle("Settings & Debug")
+        self.resize(600, 500)
         self.settings = QSettings("Yomikata", "Settings")
 
-        layout = QFormLayout(self)
+        main_layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+
+        # --- TAB 1: Configuration ---
+        config_tab = QWidget()
+        config_layout = QFormLayout(config_tab)
 
         self.ai_provider = QComboBox()
         self.ai_provider.addItems(["Ollama", "OpenAI / Compatible"])
@@ -79,14 +88,53 @@ class SettingsDialog(QDialog):
         self.api_key = QLineEdit(self.settings.value("api_key", ""))
         self.ai_model = QLineEdit(self.settings.value("ai_model", "llama3"))
 
-        layout.addRow("AI Provider:", self.ai_provider)
-        layout.addRow("API URL:", self.api_url)
-        layout.addRow("API Key:", self.api_key)
-        layout.addRow("Model Name:", self.ai_model)
+        config_layout.addRow("AI Provider:", self.ai_provider)
+        config_layout.addRow("API URL:", self.api_url)
+        config_layout.addRow("API Key:", self.api_key)
+        config_layout.addRow("Model Name:", self.ai_model)
 
-        save_btn = QPushButton("Save")
+        self.tabs.addTab(config_tab, "AI Configuration")
+
+        # --- TAB 2: Debug Logs ---
+        debug_tab = QWidget()
+        debug_layout = QVBoxLayout(debug_tab)
+
+        self.log_viewer = QTextEdit()
+        self.log_viewer.setReadOnly(True)
+        self.log_viewer.setPlaceholderText("No logs yet...")
+        self.log_viewer.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+
+        # Access the logs from the main app (the parent)
+        if parent and hasattr(parent, "debug_logs"):
+            self.log_viewer.setPlainText("\n".join(parent.debug_logs))
+            # Auto-scroll to bottom
+            self.log_viewer.verticalScrollBar().setValue(
+                self.log_viewer.verticalScrollBar().maximum()
+            )
+
+        clear_btn = QPushButton("Clear Logs")
+        clear_btn.clicked.connect(self.clear_debug_logs)
+
+        debug_layout.addWidget(self.log_viewer)
+        debug_layout.addWidget(clear_btn)
+        self.tabs.addTab(debug_tab, "Debug Logs")
+
+        main_layout.addWidget(self.tabs)
+
+        # Bottom Buttons
+        btn_box = QHBoxLayout()
+        save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
-        layout.addRow(save_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_box.addWidget(save_btn)
+        btn_box.addWidget(cancel_btn)
+        main_layout.addLayout(btn_box)
+
+    def clear_debug_logs(self):
+        if self.parent() and hasattr(self.parent(), "debug_logs"):
+            self.parent().debug_logs = []
+        self.log_viewer.clear()
 
     def save_settings(self):
         self.settings.setValue("ai_provider", self.ai_provider.currentText())
@@ -108,24 +156,25 @@ class PunctuationWidget(QLabel):
 
 
 class TokenWidget(QFrame):
-    clicked = pyqtSignal(dict)
+    clicked = pyqtSignal(dict, bool)  # Added bool for Ctrl-click status
 
     def __init__(self, token_data):
         super().__init__()
         self.setObjectName("TokenCard")
         self.data = token_data
+        self.is_selected = False  # Tracking state
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)  # Reduced margins
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
 
+        # Labels as before...
         self.romaji_lbl = QLabel(token_data["romaji"])
         self.romaji_lbl.setObjectName("Romaji")
         self.romaji_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         self.kana_lbl = QLabel(token_data["kana"])
         self.kana_lbl.setObjectName("Kana")
         self.kana_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         self.surface_lbl = QLabel(token_data["surface"])
         self.surface_lbl.setObjectName("Surface")
         self.surface_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -133,21 +182,32 @@ class TokenWidget(QFrame):
         layout.addWidget(self.romaji_lbl)
         layout.addWidget(self.kana_lbl)
         layout.addWidget(self.surface_lbl)
-
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # FIXED: Dynamic width based on content, but with a smaller minimum
         fm = self.surface_lbl.fontMetrics()
-        width = fm.boundingRect(token_data["surface"]).width() + 15
-        self.setMinimumWidth(max(30, width))  # Min size reduced to 30px
+        width = fm.boundingRect(token_data["surface"]).width() + 20
+        self.setFixedWidth(max(40, width))
+
+    def set_highlight(self, state):
+        self.is_selected = state
+        if state:
+            self.setStyleSheet(
+                "QFrame#TokenCard { border: 2px solid #3d5afe; background-color: #2a2a2a; }"
+            )
+        else:
+            self.setStyleSheet("")  # Reverts to stylesheet default
 
     def mousePressEvent(self, event):
-        self.clicked.emit(self.data)
+        # Check if Control key is held
+        ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        self.clicked.emit(self.data, bool(ctrl_held))
 
 
 class YomikataApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.selection_list = []  # List of selected token dicts
+        self.debug_logs = []  # Store logs for the settings menu
         init_db()
         self.processor = TextProcessor()
         self.init_ui()
@@ -235,11 +295,19 @@ class YomikataApp(QMainWindow):
         self.save_ai_btn.setStyleSheet(
             "background-color: #2e7d32; color: white; padding: 8px;"
         )
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)  # Indeterminate "pulser"
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setStyleSheet(
+            "QProgressBar::chunk { background-color: #3d5afe; }"
+        )
+        self.progress_bar.setFixedHeight(4)
 
         right_layout.addWidget(QLabel("<b>DICTIONARY REVEAL</b>"))
         right_layout.addWidget(self.dict_display)
         right_layout.addLayout(ai_controls_layout)
         right_layout.addWidget(self.save_ai_btn)
+        right_layout.addWidget(self.progress_bar)
 
         self.splitter.addWidget(left_container)
         self.splitter.addWidget(right_container)
@@ -294,23 +362,6 @@ class YomikataApp(QMainWindow):
                 card.clicked.connect(self.handle_token_click)
                 self.matrix_layout.addWidget(card)
 
-    def handle_token_click(self, data):
-        self.selected_token = data
-        self.ai_btn.setEnabled(True)
-
-        raw_definition = lookup_word(data["surface"], data["lemma"])
-        formatted_definition = self.format_definition(raw_definition)
-
-        header = f"<h2 style='margin:0;'>{data['surface']}</h2>"
-        header += (
-            f"<p style='color:#3d5afe; margin:0;'>{data['kana']} | {data['romaji']}</p>"
-        )
-        header += f"<small>POS: {data['pos']}</small><hr>"
-
-        self.dict_display.setHtml(
-            header + f"<div style='font-size:13px;'>{formatted_definition}</div>"
-        )
-
     def open_settings(self):
         dialog = SettingsDialog(self)
         if dialog.exec():
@@ -318,56 +369,123 @@ class YomikataApp(QMainWindow):
             # or update the UI based on new settings
             print("Settings saved!")
 
-    def ask_ai(self):
-        if not hasattr(self, "selected_token"):
+    def save_ai_to_dict(self):
+        """Modified to save the COMBINED phrase, not just one word."""
+        if self.selection_list and hasattr(self, "last_ai_response"):
+            # Join all selected surfaces (e.g. "わかっ" + "た" = "わかった")
+            combined_surface = "".join([t["surface"] for t in self.selection_list])
+
+            save_to_personal_dict(combined_surface, self.last_ai_response)
+
+            self.dict_display.append(
+                f"<br><i style='color:#4caf50;'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
+            )
+            self.save_ai_btn.setVisible(False)
+
+    def log_debug(self, message):
+        timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
+        self.debug_logs.append(f"[{timestamp}] {message}")
+        print(f"DEBUG: [{timestamp}] {message}")
+
+    def handle_token_click(self, data, ctrl_held):
+        # Find the widget that sent the signal
+        sender = self.sender()
+
+        if not ctrl_held:
+            # Clear previous selection if Ctrl isn't held
+            for i in range(self.matrix_layout.count()):
+                w = self.matrix_layout.itemAt(i).widget()
+                if isinstance(w, TokenWidget):
+                    w.set_highlight(False)
+            self.selection_list = [data]
+            sender.set_highlight(True)
+        else:
+            # Toggle selection in multi-mode
+            if data in self.selection_list:
+                self.selection_list.remove(data)
+                sender.set_highlight(False)
+            else:
+                self.selection_list.append(data)
+                sender.set_highlight(True)
+
+        self.update_dictionary_view()
+
+    def update_dictionary_view(self):
+        if not self.selection_list:
             return
 
-        word = self.selected_token["surface"]
-        context = self.input_area.toPlainText()
+        # Sort selection by their order in the text (optional but recommended)
+        # For now, we just join them
+        combined_surface = "".join([t["surface"] for t in self.selection_list])
+        combined_lemma = "".join([t["lemma"] for t in self.selection_list])
 
-        # Construct a targeted prompt
+        self.ai_btn.setEnabled(True)
+        self.save_ai_btn.setVisible(False)
+
+        # Lookup logic... (Eijiro lookup for the combined string)
+        definition = lookup_word(combined_surface, combined_lemma)
+
+        header = f"<h2>{combined_surface}</h2><hr>"
+        self.dict_display.setHtml(header + self.format_definition(definition))
+
+    def ask_ai(self):
+        if not self.selection_list:
+            return
+
+        # Create a detailed breakdown for the AI
+        details = [
+            f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})"
+            for t in self.selection_list
+        ]
+        combined_text = "".join([t["surface"] for t in self.selection_list])
+
         prompt = (
-            f"You are a Japanese language expert. Context: '{context}'\n"
-            f"Please explain the specific word/grammar point: '{word}'.\n"
-            "Provide a concise definition, its role in this sentence, and any nuance. "
-            "Respond in English, but keep the tone helpful for a student."
+            f"You are a Japanese linguistic expert. Analyze this specific phrase: '{combined_text}'\n"
+            f"Context: {self.input_area.toPlainText()}\n"
+            f"Grammar Components:\n" + "\n".join(details) + "\n\n"
+            "Please explain:\n"
+            "1. The meaning of the combined phrase.\n"
+            "2. How the individual tokens conjugate or connect (e.g., stem + auxiliary).\n"
+            "3. Any specific nuance in this context.\n"
+            "Use Markdown for formatting."
         )
 
-        self.dict_display.append("<br><hr><b>AI Sensei is thinking...</b><br>")
+        self.log_debug(f"AI Prompt Sent: {prompt}")
+        self.progress_bar.setVisible(True)
         self.ai_btn.setEnabled(False)
 
         self.worker = AIWorker(prompt)
         self.worker.finished.connect(self.on_ai_response)
-        self.worker.error.connect(
-            lambda err: self.dict_display.append(
-                f"<span style='color:red;'>Error: {err}</span>"
-            )
-        )
+        self.worker.error.connect(self.on_ai_error)
         self.worker.start()
 
     def on_ai_response(self, response):
+        self.log_debug(f"AI Response Received:\n{response}")
+        self.progress_bar.setVisible(False)
         self.ai_btn.setEnabled(True)
-        # Store the latest AI response in a temporary variable so we can save it
         self.last_ai_response = response
 
-        # Append to display
-        formatted_response = response.replace("\n", "<br>")
-        self.dict_display.append(f"<b>AI Sensei:</b><br>{formatted_response}")
+        # Convert Markdown to HTML
+        html_content = markdown.markdown(response)
 
-        # Show a "Save this to my dictionary" button if it's not already there
-        if not hasattr(self, "save_ai_btn"):
-            self.save_ai_btn = QPushButton("Save AI Explanation to Personal Dict")
-            self.save_ai_btn.clicked.connect(self.save_ai_to_dict)
-            self.layout().itemAt(0).widget().layout().addWidget(
-                self.save_ai_btn
-            )  # Add to sidebar
+        # Add some basic CSS to the HTML to make it look nice in the dark theme
+        styled_html = f"""
+        <style>
+            b, strong {{ color: #536dfe; }}
+            li {{ margin-bottom: 5px; }}
+            code {{ background-color: #333; padding: 2px; }}
+        </style>
+        {html_content}
+        """
+        self.dict_display.append("<br><hr>")
+        self.dict_display.append(styled_html)
+        self.save_ai_btn.setVisible(True)
 
-    def save_ai_to_dict(self):
-        if hasattr(self, "selected_token") and hasattr(self, "last_ai_response"):
-            word = self.selected_token["surface"]
-            # We save it as a custom definition
-            save_to_personal_dict(word, self.last_ai_response)
-            self.dict_display.append("<br><i>Saved to personal dictionary!</i>")
+    def on_ai_error(self, err):
+        self.log_debug(f"AI ERROR: {err}")
+        self.progress_bar.setVisible(False)
+        self.ai_btn.setEnabled(True)
+        self.dict_display.append(f"<p style='color:red;'>{err}</p>")
 
 
 if __name__ == "__main__":

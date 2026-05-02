@@ -13,11 +13,17 @@ class TextProcessor:
 
         for token in tokens:
             surface = token.surface
-            # Get lemma (base form) for dictionary lookups
             lemma = token.feature.lemma if token.feature.lemma else surface
 
-            # Use pykakasi for kana/romaji
-            converted = self.kakasi.convert(surface)
+            # 1. Use the analyzer's reading (Katakana) if available,
+            # it's usually more accurate for Kanji than Kakasi alone.
+            reading = (
+                token.feature.kana
+                if hasattr(token.feature, "kana") and token.feature.kana
+                else surface
+            )
+
+            converted = self.kakasi.convert(reading)
             kana = "".join([item["hira"] for item in converted])
             romaji = "".join([item["hepburn"] for item in converted])
 
@@ -27,16 +33,23 @@ class TextProcessor:
                     "kana": kana,
                     "romaji": romaji,
                     "lemma": lemma,
-                    "pos": token.feature.pos1,  # Part of speech
+                    "pos": token.feature.pos1,
                 }
             )
-        return results
 
-    def lookup_eijiro(self, word, db_path="yomikata.db"):
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        # Search for the word or its base form
-        cursor.execute("SELECT definition FROM dictionary WHERE headword = ?", (word,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else "No definition found."
+        # 2. Handle the small 'tsu' (っ) phonetic doubling
+        for i in range(len(results) - 1):
+            current = results[i]
+            # If current token ends with a sokuon
+            if current["surface"].endswith(("っ", "ッ")):
+                next_token = results[i + 1]
+                if next_token["romaji"]:
+                    first_char_of_next = next_token["romaji"][0]
+                    # Replace 'tsu' or 'xtsu' at the end with the doubled consonant
+                    # Most converters return 'tsu'. We strip it and add the leading char of next word.
+                    if current["romaji"].endswith("tsu"):
+                        results[i]["romaji"] = (
+                            current["romaji"][:-3] + first_char_of_next
+                        )
+
+        return results

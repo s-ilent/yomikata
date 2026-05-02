@@ -1,4 +1,7 @@
-from PyQt6.QtCore import Qt, pyqtSignal
+import os
+import sqlite3
+
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSignal as QtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -9,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProgressBar,
     QPushButton,
     QTabWidget,
     QTextEdit,
@@ -16,6 +20,87 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import QSettings
+
+
+def import_dictionary_file(source_path, target_db_path, progress_callback=None):
+    """
+    Import entries from an Eijiro-style text file into a SQLite database.
+    Handles both UTF-8 and CP932 (Shift-JIS) encoding.
+
+    Returns the number of entries imported.
+    """
+    # Initialize target database
+    conn = sqlite3.connect(target_db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dictionary (
+            headword TEXT,
+            definition TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+    conn.commit()
+
+    # Detect encoding
+    try:
+        f = open(source_path, "r", encoding="utf-8")
+        f.readline()
+        f.seek(0)
+    except UnicodeDecodeError:
+        f = open(source_path, "r", encoding="cp932")
+
+    entries = []
+    total = 0
+
+    with f:
+        for line in f:
+            if line.startswith("■"):
+                parts = line.lstrip("■").split(" : ", 1)
+                if len(parts) == 2:
+                    entries.append((parts[0].strip(), parts[1].strip()))
+
+            if len(entries) >= 20000:
+                cursor.executemany("INSERT INTO dictionary VALUES (?, ?)", entries)
+                conn.commit()
+                total += len(entries)
+                entries = []
+                if progress_callback:
+                    progress_callback(total)
+
+    # Insert remaining
+    if entries:
+        cursor.executemany("INSERT INTO dictionary VALUES (?, ?)", entries)
+        total += len(entries)
+
+    conn.commit()
+    conn.close()
+
+    if progress_callback:
+        progress_callback(total)
+
+    return total
+
+
+class ImportWorker(QThread):
+    progress = QtSignal(int)
+    finished = QtSignal(int)
+    error = QtSignal(str)
+
+    def __init__(self, source_path, target_db_path):
+        super().__init__()
+        self.source_path = source_path
+        self.target_db_path = target_db_path
+
+    def run(self):
+        try:
+            count = import_dictionary_file(
+                self.source_path,
+                self.target_db_path,
+                lambda p: self.progress.emit(p)
+            )
+            self.finished.emit(count)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class PunctuationWidget(QLabel):
@@ -153,6 +238,45 @@ class SettingsDialog(QDialog):
         dict_layout.addWidget(remove_dict_btn)
         self.tabs.addTab(dict_tab, "Dictionaries")
 
+        # --- TAB 4: Import ---
+        import_tab = QWidget()
+        import_layout = QVBoxLayout(import_tab)
+
+        import_layout.addWidget(QLabel("Import Eijiro-style Dictionary:"))
+        import_layout.addWidget(QLabel("<small>Select a text file (UTF-8 or Shift-JIS) to import entries into a database.</small>"))
+
+        self.source_file_label = QLabel("No file selected")
+        btn_layout = QHBoxLayout()
+        select_file_btn = QPushButton("Select Source File...")
+        select_file_btn.clicked.connect(self.select_source_file)
+        btn_layout.addWidget(select_file_btn)
+        btn_layout.addWidget(self.source_file_label, stretch=1)
+        import_layout.addLayout(btn_layout)
+
+        # Target database
+        target_layout = QHBoxLayout()
+        target_layout.addWidget(QLabel("Target DB:"))
+        self.target_db = QLineEdit("")
+        browse_target_btn = QPushButton("Browse...")
+        browse_target_btn.clicked.connect(self.browse_target_db)
+        target_layout.addWidget(self.target_db)
+        target_layout.addWidget(browse_target_btn)
+        import_layout.addLayout(target_layout)
+
+        self.import_progress = QProgressBar()
+        self.import_progress.setVisible(False)
+        import_layout.addWidget(self.import_progress)
+
+        self.import_status = QLabel("")
+        import_layout.addWidget(self.import_status)
+
+        import_btn = QPushButton("Start Import")
+        import_btn.clicked.connect(self.start_import)
+        import_layout.addWidget(import_btn)
+
+        import_layout.addStretch()
+        self.tabs.addTab(import_tab, "Import")
+
         # Bottom Buttons
         btn_box = QHBoxLayout()
         save_btn = QPushButton("Save Settings")
@@ -191,6 +315,60 @@ class SettingsDialog(QDialog):
         if self.parent() and hasattr(self.parent(), "debug_logs"):
             self.parent().debug_logs = []
         self.log_viewer.clear()
+
+    def select_source_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Dictionary Source File", "",
+            "Text Files (*.txt);;All Files (*)"
+        )
+        if path:
+            self.source_file_label.setText(os.path.basename(path))
+            self.source_file = path
+            # Suggest a default DB name based on source file
+            base_name = os.path.splitext(os.path.basename(path))[0]
+            self.target_db.setText(f"{base_name}.db")
+
+    def browse_target_db(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Target Database", "",
+            "SQLite Database (*.db)"
+        )
+        if path:
+            self.target_db.setText(path)
+
+    def start_import(self):
+        if not hasattr(self, "source_file"):
+            self.import_status.setText("Please select a source file first.")
+            return
+
+        source = self.source_file
+        target = self.target_db.text()
+
+        self.import_progress.setVisible(True)
+        self.import_progress.setRange(0, 0)  # Indeterminate
+        self.import_status.setText("Importing...")
+
+        self.worker = ImportWorker(source, target)
+        self.worker.finished.connect(self.on_import_finished)
+        self.worker.error.connect(self.on_import_error)
+        self.worker.start()
+
+    def on_import_finished(self, count):
+        self.import_progress.setVisible(False)
+        self.import_status.setText(f"✓ Imported {count:,} entries.")
+
+        # Optionally add to active dictionaries
+        target = self.target_db.text()
+        if target != "yomikata.db":
+            dicts = self.settings.value("extra_dictionaries", [])
+            if target not in dicts:
+                dicts.append(target)
+                self.settings.setValue("extra_dictionaries", dicts)
+                self.refresh_dict_list()
+
+    def on_import_error(self, err):
+        self.import_progress.setVisible(False)
+        self.import_status.setText(f"Error: {err}")
 
     def save_settings(self):
         self.settings.setValue("ai_provider", self.ai_provider.currentText())

@@ -1,64 +1,103 @@
+import os
 import sqlite3
 
-DB_PATH = "yomikata.db"
+
+class DatabaseManager:
+    def __init__(self, main_db="yomikata.db"):
+        self.main_db = main_db
+        self.init_main_db()
+
+    def get_conn(self, db_path=None):
+        if db_path is None:
+            db_path = self.main_db
+        return sqlite3.connect(db_path)
+
+    def init_main_db(self):
+        with self.get_conn(self.main_db) as conn:
+            cursor = conn.cursor()
+            # Personal notes
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS personal_dict (
+                    headword TEXT PRIMARY KEY,
+                    definition TEXT
+                )
+            """)
+            # Main dictionary (Eijiro)
+            cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+            conn.commit()
+
+    def save_personal_note(self, word, definition):
+        with self.get_conn(self.main_db) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO personal_dict VALUES (?, ?)",
+                (word, definition)
+            )
+            conn.commit()
+
+    def get_personal_note(self, word):
+        with self.get_conn(self.main_db) as conn:
+            res = conn.execute(
+                "SELECT definition FROM personal_dict WHERE headword = ?",
+                (word,)
+            ).fetchone()
+            return res[0] if res else None
+
+    def lookup(self, word, lemma, extra_paths=None):
+        results = []
+
+        # 1. Personal Note
+        note = self.get_personal_note(word) or self.get_personal_note(lemma)
+        if note:
+            results.append(f"### 📝 Personal Note\n{note}")
+
+        # 2. Search all registered DBs
+        search_paths = [self.main_db] + (extra_paths or [])
+        for path in set(search_paths):
+            if not os.path.exists(path):
+                continue
+            try:
+                with self.get_conn(path) as conn:
+                    for w in [word, lemma]:
+                        res = conn.execute(
+                            "SELECT definition FROM dictionary WHERE headword = ?",
+                            (w,)
+                        ).fetchone()
+                        if res:
+                            name = os.path.basename(path).replace(".db", "").upper()
+                            results.append(f"### 📖 {name}\n{res[0]}")
+            except Exception:
+                continue
+
+        return "\n\n---\n\n".join(results)
+
+
+# Global instance for backward compatibility
+_db = None
+
+
+def _get_db():
+    global _db
+    if _db is None:
+        _db = DatabaseManager()
+    return _db
 
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    # Eijiro table
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)"
-    )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
-
-    # Personal Dictionary (for AI suggestions and manual entries)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS personal_dict (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            headword TEXT UNIQUE,
-            definition TEXT,
-            notes TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+    """Initialize the database (creates tables if needed)."""
+    _get_db().init_main_db()
 
 
-def lookup_word(word, lemma):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    # Try exact word, then lemma in Personal Dict, then Eijiro
-    results = []
-
-    for w in [word, lemma]:
-        # 1. Personal Dict
-        cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (w,))
-        res = cursor.fetchone()
-        if res:
-            results.append(f"<b>[Personal]</b> {res[0]}")
-
-        # 2. Eijiro
-        cursor.execute("SELECT definition FROM dictionary WHERE headword = ?", (w,))
-        res = cursor.fetchone()
-        if res:
-            results.append(res[0])
-
-    conn.close()
-    return "\n\n".join(list(dict.fromkeys(results)))  # Deduplicate
+def lookup_word(word, lemma, extra_dicts=None):
+    """Backward-compatible lookup function."""
+    return _get_db().lookup(word, lemma, extra_dicts)
 
 
-def save_to_personal_dict(headword, definition):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    # Using REPLACE to update if the word already exists
-    cursor.execute(
-        """
-        INSERT OR REPLACE INTO personal_dict (headword, definition)
-        VALUES (?, ?)
-    """,
-        (headword, definition),
-    )
-    conn.commit()
-    conn.close()
+def save_to_personal_dict(word, definition):
+    """Backward-compatible save function."""
+    _get_db().save_personal_note(word, definition)
+
+
+def get_personal_note(word):
+    """Get a personal note for a word."""
+    return _get_db().get_personal_note(word)

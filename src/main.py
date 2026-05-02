@@ -3,204 +3,27 @@ import sys
 
 import markdown
 import qtawesome as qta
-from PyQt6.QtCore import QDateTime, QPoint, QRect, QSettings, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QDateTime, QSettings, Qt
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
-    QDialog,
-    QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
-    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ai_worker import AIWorker
-from database import init_db, lookup_word, save_to_personal_dict
-from flow_layout import FlowLayout  # Our new layout!
-
-# Internal imports
+from database import DatabaseManager, init_db, lookup_word, save_to_personal_dict
+from flow_layout import FlowLayout
 from processor import TextProcessor
-
-DARK_STYLE = """
-    QMainWindow, QWidget { background-color: #121212; color: #e0e0e0; font-family: 'Meiryo', 'Segoe UI'; }
-    QTextEdit {
-        background-color: #1e1e1e;
-        border: 1px solid #333;
-        color: #e0e0e0;
-        border-radius: 6px;
-        padding: 10px;
-        font-size: 14px;
-    }
-    QScrollArea { border: none; background-color: transparent; }
-    QPushButton#AnalyzeBtn {
-        background-color: #3d5afe;
-        color: white;
-        border-radius: 6px;
-        padding: 12px;
-        font-weight: bold;
-        font-size: 14px;
-    }
-    QPushButton#AnalyzeBtn:hover { background-color: #536dfe; }
-
-    QFrame#TokenCard {
-        border: 1px solid #2a2a2a;
-        border-radius: 6px;
-        background-color: #1e1e1e;
-    }
-    QFrame#TokenCard:hover { border: 1px solid #3d5afe; background-color: #252525; }
-    QLabel#Romaji { color: #777; font-size: 10px; }
-    QLabel#Kana { color: #3d5afe; font-size: 12px; font-weight: bold; }
-    QLabel#Surface { font-size: 20px; font-weight: 500; margin-top: 2px; }
-"""
-
-
-class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Settings & Debug")
-        self.resize(600, 500)
-        self.settings = QSettings("Yomikata", "Settings")
-
-        main_layout = QVBoxLayout(self)
-        self.tabs = QTabWidget()
-
-        # --- TAB 1: Configuration ---
-        config_tab = QWidget()
-        config_layout = QFormLayout(config_tab)
-
-        self.ai_provider = QComboBox()
-        self.ai_provider.addItems(["Ollama", "OpenAI / Compatible"])
-        self.ai_provider.setCurrentText(self.settings.value("ai_provider", "Ollama"))
-
-        self.api_url = QLineEdit(
-            self.settings.value("api_url", "http://localhost:11434")
-        )
-        self.api_key = QLineEdit(self.settings.value("api_key", ""))
-        self.ai_model = QLineEdit(self.settings.value("ai_model", "llama3"))
-
-        config_layout.addRow("AI Provider:", self.ai_provider)
-        config_layout.addRow("API URL:", self.api_url)
-        config_layout.addRow("API Key:", self.api_key)
-        config_layout.addRow("Model Name:", self.ai_model)
-
-        self.tabs.addTab(config_tab, "AI Configuration")
-
-        # --- TAB 2: Debug Logs ---
-        debug_tab = QWidget()
-        debug_layout = QVBoxLayout(debug_tab)
-
-        self.log_viewer = QTextEdit()
-        self.log_viewer.setReadOnly(True)
-        self.log_viewer.setPlaceholderText("No logs yet...")
-        self.log_viewer.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-
-        # Access the logs from the main app (the parent)
-        if parent and hasattr(parent, "debug_logs"):
-            self.log_viewer.setPlainText("\n".join(parent.debug_logs))
-            # Auto-scroll to bottom
-            self.log_viewer.verticalScrollBar().setValue(
-                self.log_viewer.verticalScrollBar().maximum()
-            )
-
-        clear_btn = QPushButton("Clear Logs")
-        clear_btn.clicked.connect(self.clear_debug_logs)
-
-        debug_layout.addWidget(self.log_viewer)
-        debug_layout.addWidget(clear_btn)
-        self.tabs.addTab(debug_tab, "Debug Logs")
-
-        main_layout.addWidget(self.tabs)
-
-        # Bottom Buttons
-        btn_box = QHBoxLayout()
-        save_btn = QPushButton("Save Settings")
-        save_btn.clicked.connect(self.save_settings)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(save_btn)
-        btn_box.addWidget(cancel_btn)
-        main_layout.addLayout(btn_box)
-
-    def clear_debug_logs(self):
-        if self.parent() and hasattr(self.parent(), "debug_logs"):
-            self.parent().debug_logs = []
-        self.log_viewer.clear()
-
-    def save_settings(self):
-        self.settings.setValue("ai_provider", self.ai_provider.currentText())
-        self.settings.setValue("api_url", self.api_url.text())
-        self.settings.setValue("api_key", self.api_key.text())
-        self.settings.setValue("ai_model", self.ai_model.text())
-        self.accept()
-
-
-class PunctuationWidget(QLabel):
-    """Small, non-clickable widget for 、。！？ etc."""
-
-    def __init__(self, text):
-        super().__init__(text)
-        self.setStyleSheet(
-            "font-size: 20px; color: #555; padding: 0px; margin-top: 15px;"
-        )
-        self.setAlignment(Qt.AlignmentFlag.AlignBottom)
-
-
-class TokenWidget(QFrame):
-    clicked = pyqtSignal(dict, bool)  # Added bool for Ctrl-click status
-
-    def __init__(self, token_data):
-        super().__init__()
-        self.setObjectName("TokenCard")
-        self.data = token_data
-        self.is_selected = False  # Tracking state
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)
-
-        # Labels as before...
-        self.romaji_lbl = QLabel(token_data["romaji"])
-        self.romaji_lbl.setObjectName("Romaji")
-        self.romaji_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.kana_lbl = QLabel(token_data["kana"])
-        self.kana_lbl.setObjectName("Kana")
-        self.kana_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.surface_lbl = QLabel(token_data["surface"])
-        self.surface_lbl.setObjectName("Surface")
-        self.surface_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(self.romaji_lbl)
-        layout.addWidget(self.kana_lbl)
-        layout.addWidget(self.surface_lbl)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        fm = self.surface_lbl.fontMetrics()
-        width = fm.boundingRect(token_data["surface"]).width() + 20
-        self.setFixedWidth(max(40, width))
-
-    def set_highlight(self, state):
-        self.is_selected = state
-        if state:
-            self.setStyleSheet(
-                "QFrame#TokenCard { border: 2px solid #3d5afe; background-color: #2a2a2a; }"
-            )
-        else:
-            self.setStyleSheet("")  # Reverts to stylesheet default
-
-    def mousePressEvent(self, event):
-        # Check if Control key is held
-        ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
-        self.clicked.emit(self.data, bool(ctrl_held))
+from style import DARK_STYLE
+from widgets import PunctuationWidget, SettingsDialog, TokenWidget
 
 
 class YomikataApp(QMainWindow):
@@ -208,7 +31,7 @@ class YomikataApp(QMainWindow):
         super().__init__()
         self.selection_list = []  # List of selected token dicts
         self.debug_logs = []  # Store logs for the settings menu
-        init_db()
+        self.db = DatabaseManager()
         self.processor = TextProcessor()
         self.init_ui()
 
@@ -372,7 +195,7 @@ class YomikataApp(QMainWindow):
     def save_ai_to_dict(self):
         """Modified to save the COMBINED phrase, not just one word."""
         if self.selection_list and hasattr(self, "last_ai_response"):
-            # Join all selected surfaces (e.g. "わかっ" + "た" = "わかった")
+            # Join all selected surfaces (e.g. "わかっ" + "た" = "ようになった")
             combined_surface = "".join([t["surface"] for t in self.selection_list])
 
             save_to_personal_dict(combined_surface, self.last_ai_response)
@@ -414,19 +237,43 @@ class YomikataApp(QMainWindow):
         if not self.selection_list:
             return
 
-        # Sort selection by their order in the text (optional but recommended)
-        # For now, we just join them
         combined_surface = "".join([t["surface"] for t in self.selection_list])
-        combined_lemma = "".join([t["lemma"] for t in self.selection_list])
+        combined_kana = "".join([t["kana"] for t in self.selection_list])
+        combined_romaji = "".join([t["romaji"] for t in self.selection_list])
 
+        # Pull details from the first token if single, or combine if multi
+        pos_list = ", ".join(set([t["pos"] for t in self.selection_list]))
+        lemma_list = " + ".join(set([t["lemma"] for t in self.selection_list]))
+
+        # RICH MARKDOWN HEADER
+        markdown_text = f"""
+# {combined_surface}
+**Reading:** `{combined_kana}` | `{combined_romaji}`
+**Lemma:** _{lemma_list}_ | **Type:** {pos_list}
+
+---
+"""
+        # Fetch dictionary content
+        extra_dicts = QSettings("Yomikata", "Settings").value("extra_dictionaries", [])
+        raw_defs = lookup_word(combined_surface, lemma_list, extra_dicts)
+        markdown_text += self.format_definition(raw_defs)
+
+        # Render
+        html = markdown.markdown(markdown_text, extensions=["extra"])
+        self.dict_display.setHtml(self.apply_custom_css(html))
         self.ai_btn.setEnabled(True)
-        self.save_ai_btn.setVisible(False)
 
-        # Lookup logic... (Eijiro lookup for the combined string)
-        definition = lookup_word(combined_surface, combined_lemma)
-
-        header = f"<h2>{combined_surface}</h2><hr>"
-        self.dict_display.setHtml(header + self.format_definition(definition))
+    def apply_custom_css(self, html):
+        return f"""
+        <style>
+            h1 {{ color: #536dfe; font-size: 28px; margin-bottom: 0; }}
+            h3 {{ color: #ff4081; border-bottom: 1px solid #333; padding-bottom: 5px; }}
+            code {{ background-color: #2a2a2a; color: #ff4081; padding: 2px 4px; border-radius: 4px; }}
+            strong {{ color: #e0e0e0; }}
+            hr {{ border: 0; border-top: 1px solid #333; }}
+        </style>
+        {html}
+        """
 
     def ask_ai(self):
         if not self.selection_list:

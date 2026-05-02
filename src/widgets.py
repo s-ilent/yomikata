@@ -81,6 +81,61 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None):
     return total
 
 
+def export_personal_dict(output_path, format="json"):
+    """
+    Export personal_dict table to JSON or CSV.
+    Returns the number of entries exported.
+    """
+    conn = sqlite3.connect("yomikata.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT headword, definition FROM personal_dict")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if format == "json":
+        import json
+        data = [{"headword": row[0], "definition": row[1]} for row in rows]
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    else:  # csv
+        import csv
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["headword", "definition"])
+            writer.writerows(rows)
+
+    return len(rows)
+
+
+def import_personal_dict(input_path, format=None):
+    """
+    Import personal_dict from a JSON or CSV file.
+    Returns the number of entries imported.
+    """
+    if format is None:
+        format = os.path.splitext(input_path)[1].lower().lstrip(".")
+
+    conn = sqlite3.connect("yomikata.db")
+    cursor = conn.cursor()
+
+    if format == "json":
+        import json
+        with open(input_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entries = [(item["headword"], item["definition"]) for item in data]
+    else:  # csv
+        import csv
+        with open(input_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            entries = [(row["headword"], row["definition"]) for row in reader]
+
+    cursor.executemany("INSERT OR REPLACE INTO personal_dict VALUES (?, ?)", entries)
+    conn.commit()
+    conn.close()
+
+    return len(entries)
+
+
 class ImportWorker(QThread):
     progress = QtSignal(int)
     finished = QtSignal(int)
@@ -277,6 +332,34 @@ class SettingsDialog(QDialog):
         import_layout.addStretch()
         self.tabs.addTab(import_tab, "Import")
 
+        # --- TAB 5: Export ---
+        export_tab = QWidget()
+        export_layout = QVBoxLayout(export_tab)
+
+        export_layout.addWidget(QLabel("Export Personal Dictionary:"))
+        export_layout.addWidget(QLabel("<small>Backup your saved notes and AI explanations.</small>"))
+
+        self.export_format = QComboBox()
+        self.export_format.addItems(["JSON", "CSV"])
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel("Format:"))
+        format_layout.addWidget(self.export_format)
+        export_layout.addLayout(format_layout)
+
+        self.export_status = QLabel("")
+        export_layout.addWidget(self.export_status)
+
+        export_btn = QPushButton("Export to File...")
+        export_btn.clicked.connect(self.export_personal_dict)
+        export_layout.addWidget(export_btn)
+
+        import_btn = QPushButton("Import from File...")
+        import_btn.clicked.connect(self.import_personal_dict)
+        export_layout.addWidget(import_btn)
+
+        export_layout.addStretch()
+        self.tabs.addTab(export_tab, "Export")
+
         # Bottom Buttons
         btn_box = QHBoxLayout()
         save_btn = QPushButton("Save Settings")
@@ -369,6 +452,35 @@ class SettingsDialog(QDialog):
     def on_import_error(self, err):
         self.import_progress.setVisible(False)
         self.import_status.setText(f"Error: {err}")
+
+    def export_personal_dict(self):
+        fmt = self.export_format.currentText().lower()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Personal Dictionary", f"personal_dict.{fmt}",
+            f"{fmt.upper()} Files (*.{fmt});;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            count = export_personal_dict(path, fmt)
+            self.export_status.setText(f"✓ Exported {count} entries.")
+        except Exception as e:
+            self.export_status.setText(f"Error: {e}")
+
+    def import_personal_dict(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Personal Dictionary", "",
+            "Backup Files (*.json *.csv);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            count = import_personal_dict(path)
+            self.export_status.setText(f"✓ Imported {count} entries.")
+        except Exception as e:
+            self.export_status.setText(f"Error: {e}")
 
     def save_settings(self):
         self.settings.setValue("ai_provider", self.ai_provider.currentText())

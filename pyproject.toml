@@ -1,0 +1,14 @@
+[project]
+name = "yomikata"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fugashi>=1.5.2",
+    "jamdict>=0.1a11.post2",
+    "ollama>=0.6.2",
+    "pykakasi>=2.3.0",
+    "pyqt6>=6.11.0",
+    "unidic-lite>=1.0.8",
+]

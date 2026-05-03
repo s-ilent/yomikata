@@ -35,20 +35,21 @@ def create_fts_index(db_path):
     elif cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
         table_name = "personal_dict"
         fts_table = "personal_dict_fts"
-        rowid_col = "rowid" # personal_dict doesn't have an explicit 'id' column, uses default rowid
+        rowid_col = "rowid"
     else:
         conn.close()
         return 0
 
     # Drop and recreate FTS table as external content with trigram tokenizer
+    # We only index 'definition' to save significant space, as headwords have their own index
     cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
     cursor.execute(f"""
         CREATE VIRTUAL TABLE {fts_table} USING fts5(
-            headword, 
             definition, 
             content='{table_name}', 
             content_rowid='{rowid_col}',
-            tokenize='trigram'
+            tokenize='trigram',
+            detail=column
         )
     """)
     
@@ -57,6 +58,9 @@ def create_fts_index(db_path):
     
     count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
     conn.commit()
+    
+    # Optional: vacuum to recover space if this was a rebuild from a larger index
+    cursor.execute("VACUUM")
     conn.close()
 
     return count
@@ -108,14 +112,15 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None, 
     conn.commit()
 
     # Create FTS5 as external content (references dictionary table, doesn't duplicate data)
+    # Only index definition to save space
     cursor.execute("DROP TABLE IF EXISTS dictionary_fts")
     cursor.execute("""
         CREATE VIRTUAL TABLE dictionary_fts USING fts5(
-            headword,
             definition,
             content='dictionary',
             content_rowid='id',
-            tokenize='trigram'
+            tokenize='trigram',
+            detail=column
         )
     """)
     conn.commit()

@@ -55,14 +55,14 @@ class DatabaseManager:
                 definition TEXT
             )
         """)
-        # Create FTS for personal notes
+        # Create FTS for personal notes - index only definition to save space
         cursor.execute("DROP TABLE IF EXISTS personal_dict_fts")
         cursor.execute("""
             CREATE VIRTUAL TABLE personal_dict_fts USING fts5(
-                headword, 
                 definition, 
                 content='personal_dict',
-                tokenize='trigram'
+                tokenize='trigram',
+                detail=column
             )
         """)
         # Sync FTS for personal notes
@@ -80,7 +80,7 @@ class DatabaseManager:
         # Get old definition to properly delete from FTS index
         old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
         if old_res:
-            cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts, headword, definition) VALUES('delete', ?, ?)", (word, old_res[0]))
+            cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],))
         
         cursor.execute(
             "INSERT OR REPLACE INTO personal_dict VALUES (?, ?)",
@@ -88,7 +88,7 @@ class DatabaseManager:
         )
         
         # Insert new entry into FTS
-        cursor.execute("INSERT INTO personal_dict_fts(headword, definition) VALUES (?, ?)", (word, definition))
+        cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
         conn.commit()
 
     def get_personal_note(self, word):
@@ -128,12 +128,20 @@ class DatabaseManager:
         return "\n\n---\n\n".join(results)
 
     def search_definitions(self, query, extra_paths=None):
-        """Search for query inside definitions using FTS5 with ranking and sanitization."""
+        """Search for query inside definitions using FTS5 with ranking, sanitization, and LIKE fallback."""
         results = []
         search_paths = [self.main_db] + (extra_paths or [])
         
-        # Sanitize query for FTS5 (basic escaping of double quotes and wrapping in quotes)
-        sanitized_query = '"' + query.replace('"', '""') + '"'
+        # Determine if we should use LIKE fallback for short queries (especially Japanese/Unicode)
+        # Trigram needs 3+ characters to be effective.
+        use_like_fallback = len(query) < 3 or any(ord(c) > 127 for c in query)
+
+        # Sanitize query: split into words and wrap each in quotes to prevent syntax errors
+        # but allow multiple words to be ANDed.
+        parts = query.split()
+        if not parts:
+            return ""
+        sanitized_query = " AND ".join(['"' + p.replace('"', '""') + '"' for p in parts])
 
         for path in set(search_paths):
             if not os.path.exists(path):
@@ -148,10 +156,22 @@ class DatabaseManager:
                         "SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict_fts'"
                     ).fetchone()
                     if table_exists:
+                        # Try FTS first
                         res = conn.execute(
-                            "SELECT headword, definition FROM personal_dict_fts WHERE personal_dict_fts MATCH ? ORDER BY rank LIMIT 5",
+                            """SELECT p.headword, p.definition 
+                               FROM personal_dict_fts f 
+                               JOIN personal_dict p ON p.rowid = f.rowid 
+                               WHERE f.definition MATCH ? ORDER BY rank LIMIT 5""",
                             (sanitized_query,)
                         ).fetchall()
+                        
+                        # Fallback to LIKE if no results and query is short/unicode
+                        if not res and use_like_fallback:
+                            res = conn.execute(
+                                "SELECT headword, definition FROM personal_dict WHERE definition LIKE ? LIMIT 5",
+                                (f"%{query}%",)
+                            ).fetchall()
+                            
                         for headword, definition in res:
                             results.append(f"### 📝 Personal Note (search: {headword})\n{definition}")
 
@@ -162,18 +182,38 @@ class DatabaseManager:
                 if not table_exists:
                     continue
 
-                # FTS5 search with BM25 ranking
+                # FTS5 search with BM25 ranking. 
+                # We join with 'dictionary' because FTS only indexes the definition column now.
                 res = conn.execute(
-                    "SELECT headword, definition FROM dictionary_fts WHERE dictionary_fts MATCH ? ORDER BY rank LIMIT 10",
+                    """SELECT d.headword, d.definition 
+                       FROM dictionary_fts f
+                       JOIN dictionary d ON d.id = f.rowid
+                       WHERE f.definition MATCH ? ORDER BY rank LIMIT 10""",
                     (sanitized_query,)
                 ).fetchall()
+                
+                # Fallback to LIKE if no results and query is short/unicode
+                if not res and use_like_fallback:
+                    res = conn.execute(
+                        "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
+                        (f"%{query}%",)
+                    ).fetchall()
                 
                 if res:
                     for headword, definition in res:
                         results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
             except Exception as e:
-                # In case of FTS syntax error even with sanitization, fallback to simple search or skip
-                continue
+                # Fallback to LIKE on any error (like FTS syntax error)
+                try:
+                    res = conn.execute(
+                        "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
+                        (f"%{query}%",)
+                    ).fetchall()
+                    if res:
+                        for headword, definition in res:
+                            results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
+                except Exception:
+                    continue
 
         return "\n\n---\n\n".join(results)
 

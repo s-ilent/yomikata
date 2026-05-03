@@ -8,6 +8,7 @@ from PyQt6.QtCore import QDateTime, QSettings, Qt
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -23,11 +24,70 @@ from PyQt6.QtWidgets import (
 )
 
 from ai_worker import AIWorker
-from database import DatabaseManager, get_personal_note, lookup_word, save_to_personal_dict, search_definitions
+from database import (
+    DatabaseManager,
+    get_personal_note,
+    lookup_word,
+    save_to_personal_dict,
+    search_definitions,
+)
 from flow_layout import FlowLayout
 from processor import TextProcessor
 from style import DARK_STYLE
 from widgets import PunctuationWidget, SettingsDialog, TokenWidget
+
+# AI Prompt Templates
+AI_TEMPLATES = {
+    "Grammar Breakdown": (
+        "You are a Japanese linguistic expert. Analyze this specific phrase: '{text}'\n"
+        "Context: {context}\n"
+        "Grammar Components:\n{components}\n\n"
+        "Please explain:\n"
+        "1. The meaning of the combined phrase.\n"
+        "2. How the individual tokens conjugate or connect (e.g., stem + auxiliary).\n"
+        "3. Any specific nuance in this context.\n"
+        "Use Markdown for formatting."
+    ),
+    "Example Sentences": (
+        "You are a Japanese language expert. Provide example sentences using: '{text}'\n"
+        "Context from user's text: {context}\n\n"
+        "Please provide:\n"
+        "1. 3-5 example sentences using this word/phrase in different contexts.\n"
+        "2. For each sentence, provide: Japanese, romaji reading, and English translation.\n"
+        "3. Briefly explain the grammar pattern used in each example.\n"
+        "Use Markdown for formatting."
+    ),
+    "Etymology": (
+        "You are a Japanese language historian. Analyze the etymology of: '{text}'\n"
+        "Part of speech: {pos}\n\n"
+        "Please explain:\n"
+        "1. The kanji composition (if any) and their individual meanings.\n"
+        "2. Historical origin and how the word evolved.\n"
+        "3. Any interesting linguistic notes about this word.\n"
+        "4. Related words or compounds that share the same kanji/roots.\n"
+        "Use Markdown for formatting."
+    ),
+    "Conjugation": (
+        "You are a Japanese grammar expert. Provide a complete conjugation table for: '{text}'\n"
+        "Part of speech: {pos}\n\n"
+        "Please provide:\n"
+        "1. All basic conjugations: dictionary, past, negative, polite (ます), te-form, potential, passive, causative, conditional.\n"
+        "2. For verbs: include masu-stem, te-stem, ra-stem variations.\n"
+        "3. Explain any irregular conjugations.\n"
+        "Use Markdown tables for the conjugation chart."
+    ),
+    "Compare/Contrast": (
+        "You are a Japanese language expert. Compare and contrast: '{text}'\n"
+        "Context: {context}\n"
+        "Part of speech: {pos}\n\n"
+        "Please explain:\n"
+        "1. What this word/phrase means and its key characteristics.\n"
+        "2. Common synonyms and how they differ in usage.\n"
+        "3. Words that are often confused with this one and why.\n"
+        "4. Tips for distinguishing between them.\n"
+        "Use Markdown for formatting."
+    ),
+}
 
 
 class YomikataApp(QMainWindow):
@@ -106,6 +166,20 @@ class YomikataApp(QMainWindow):
         # --- AI and Settings Buttons ---
         ai_controls_layout = QHBoxLayout()
 
+        # AI Template selector
+        self.ai_template = QComboBox()
+        self.ai_template.addItems(
+            [
+                "Grammar Breakdown",
+                "Example Sentences",
+                "Etymology",
+                "Conjugation",
+                "Compare/Contrast",
+            ]
+        )
+        self.ai_template.setToolTip("Select analysis mode")
+        self.ai_template.setFixedHeight(40)
+
         # Main AI Button
         self.ai_btn = QPushButton(" Ask AI Sensei")  # Added a space for icon padding
         self.ai_btn.setIcon(qta.icon("fa5s.robot", color="white"))  # Robot icon!
@@ -114,17 +188,8 @@ class YomikataApp(QMainWindow):
         self.ai_btn.setMinimumHeight(40)
         self.ai_btn.setObjectName("AnalyzeBtn")  # Reusing the blue style
 
-        # Settings Button (The Gear)
-        self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(qta.icon("fa5s.cog", color="white"))
-        self.settings_btn.setFixedSize(40, 40)  # Keep it square
-        self.settings_btn.setToolTip("Settings")
-        self.settings_btn.clicked.connect(self.open_settings)
-        self.settings_btn.setObjectName("secondary-btn")
-        self.settings_btn.setStyleSheet("padding: 0;")
-
-        ai_controls_layout.addWidget(self.ai_btn, stretch=4)  # Takes up most space
-        ai_controls_layout.addWidget(self.settings_btn, stretch=1)  # The little gear
+        ai_controls_layout.addWidget(self.ai_template, stretch=2)
+        ai_controls_layout.addWidget(self.ai_btn, stretch=3)  # Takes up most space
 
         self.save_ai_btn = QPushButton("Save AI to Personal Dict")
         self.save_ai_btn.setIcon(qta.icon("fa5s.save", color="white"))
@@ -137,6 +202,15 @@ class YomikataApp(QMainWindow):
         self.edit_note_btn.clicked.connect(self.edit_note)
         self.edit_note_btn.setEnabled(False)
         self.edit_note_btn.setObjectName("secondary-btn")
+        self.edit_note_btn.setMinimumHeight(40)
+
+        self.settings_btn = QPushButton()
+        self.settings_btn.setIcon(qta.icon("fa5s.cog", color="white"))
+        self.settings_btn.setFixedSize(40, 40)
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.clicked.connect(self.open_settings)
+        self.settings_btn.setObjectName("secondary-btn")
+        self.settings_btn.setStyleSheet("padding: 0;")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # Indeterminate "pulser"
         self.progress_bar.setVisible(False)
@@ -155,7 +229,8 @@ class YomikataApp(QMainWindow):
         # Note buttons row
         note_btn_layout = QHBoxLayout()
         note_btn_layout.addWidget(self.save_ai_btn)
-        note_btn_layout.addWidget(self.edit_note_btn)
+        note_btn_layout.addWidget(self.edit_note_btn, stretch=1)
+        note_btn_layout.addWidget(self.settings_btn)
         right_layout.addLayout(note_btn_layout)
 
         right_layout.addWidget(self.progress_bar)
@@ -244,9 +319,10 @@ class YomikataApp(QMainWindow):
         existing = get_personal_note(combined_surface)
 
         text, ok = QInputDialog.getMultiLineText(
-            self, "Edit Personal Note",
+            self,
+            "Edit Personal Note",
             f"Note for '{combined_surface}' (Markdown supported):",
-            existing or ""
+            existing or "",
         )
         if ok and text:
             save_to_personal_dict(combined_surface, text)
@@ -299,6 +375,7 @@ class YomikataApp(QMainWindow):
         markdown_text = f"""
 # {combined_surface}
 **Reading:** `{combined_kana}` | `{combined_romaji}`
+
 **Lemma:** _{lemma_list}_ | **Type:** {pos_list}
 
 ---
@@ -331,25 +408,28 @@ class YomikataApp(QMainWindow):
         if not self.selection_list:
             return
 
-        # Create a detailed breakdown for the AI
+        # Create details for the AI
         details = [
             f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})"
             for t in self.selection_list
         ]
         combined_text = "".join([t["surface"] for t in self.selection_list])
+        context = self.input_area.toPlainText()
+        pos_list = ", ".join(set([t["pos"] for t in self.selection_list]))
+        components = "\n".join(details)
 
-        prompt = (
-            f"You are a Japanese linguistic expert. Analyze this specific phrase: '{combined_text}'\n"
-            f"Context: {self.input_area.toPlainText()}\n"
-            f"Grammar Components:\n" + "\n".join(details) + "\n\n"
-            "Please explain:\n"
-            "1. The meaning of the combined phrase.\n"
-            "2. How the individual tokens conjugate or connect (e.g., stem + auxiliary).\n"
-            "3. Any specific nuance in this context.\n"
-            "Use Markdown for formatting."
+        # Get selected template
+        selected_template = self.ai_template.currentText()
+        template = AI_TEMPLATES.get(
+            selected_template, AI_TEMPLATES["Grammar Breakdown"]
         )
 
-        self.log_debug(f"AI Prompt Sent: {prompt}")
+        # Fill in template placeholders
+        prompt = template.format(
+            text=combined_text, context=context, components=components, pos=pos_list
+        )
+
+        self.log_debug(f"AI Prompt Sent (mode: {selected_template}): {prompt[:200]}...")
         self.progress_bar.setVisible(True)
         self.ai_btn.setEnabled(False)
 

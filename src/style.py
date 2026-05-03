@@ -46,6 +46,14 @@ DARK_STYLE = """
             stop:0 rgba(57,73,171,1),
             stop:1 rgba(57,73,171,0));
     }
+    /* Disabled state for primary buttons */
+    QPushButton#AnalyzeBtn:disabled, QPushButton.primary-btn:disabled {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 rgba(26,26,26,1),
+            stop:1 rgba(26,26,26,0));
+        color: #666;
+        border: 1px solid #444;
+    }
 
     /* SECONDARY BUTTON */
     QPushButton.secondary-btn {
@@ -80,6 +88,18 @@ DARK_STYLE = """
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 rgba(57,73,171,1),
             stop:1 rgba(57,73,171,0));
+    }
+    QPushButton.success-btn:disabled {
+        background: #333;
+        color: #666;
+        border: 1px solid #444;
+    }
+
+    /* SECONDARY BUTTON disabled */
+    QPushButton.secondary-btn:disabled {
+        background: #333;
+        color: #666;
+        border: 1px solid #444;
     }
 
     /* TOKEN CARD */

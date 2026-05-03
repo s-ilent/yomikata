@@ -55,6 +55,19 @@ class DatabaseManager:
                 definition TEXT
             )
         """)
+        # Create FTS for personal notes
+        cursor.execute("DROP TABLE IF EXISTS personal_dict_fts")
+        cursor.execute("""
+            CREATE VIRTUAL TABLE personal_dict_fts USING fts5(
+                headword, 
+                definition, 
+                content='personal_dict',
+                tokenize='trigram'
+            )
+        """)
+        # Sync FTS for personal notes
+        cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts) VALUES('rebuild')")
+
         # Main dictionary (Eijiro)
         cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
@@ -62,10 +75,20 @@ class DatabaseManager:
 
     def save_personal_note(self, word, definition):
         conn = self.get_conn(self.main_db)
-        conn.execute(
+        cursor = conn.cursor()
+        
+        # Get old definition to properly delete from FTS index
+        old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
+        if old_res:
+            cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts, headword, definition) VALUES('delete', ?, ?)", (word, old_res[0]))
+        
+        cursor.execute(
             "INSERT OR REPLACE INTO personal_dict VALUES (?, ?)",
             (word, definition)
         )
+        
+        # Insert new entry into FTS
+        cursor.execute("INSERT INTO personal_dict_fts(headword, definition) VALUES (?, ?)", (word, definition))
         conn.commit()
 
     def get_personal_note(self, word):
@@ -105,33 +128,51 @@ class DatabaseManager:
         return "\n\n---\n\n".join(results)
 
     def search_definitions(self, query, extra_paths=None):
-        """Search for query inside definitions using FTS5."""
+        """Search for query inside definitions using FTS5 with ranking and sanitization."""
         results = []
         search_paths = [self.main_db] + (extra_paths or [])
+        
+        # Sanitize query for FTS5 (basic escaping of double quotes and wrapping in quotes)
+        sanitized_query = '"' + query.replace('"', '""') + '"'
 
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
             try:
                 conn = self.get_conn(path)
-                # Check if FTS table exists
+                db_name = os.path.basename(path).replace(".db", "").upper()
+
+                # 1. Search Personal Notes if this is the main DB
+                if path == self.main_db:
+                    table_exists = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict_fts'"
+                    ).fetchone()
+                    if table_exists:
+                        res = conn.execute(
+                            "SELECT headword, definition FROM personal_dict_fts WHERE personal_dict_fts MATCH ? ORDER BY rank LIMIT 5",
+                            (sanitized_query,)
+                        ).fetchall()
+                        for headword, definition in res:
+                            results.append(f"### 📝 Personal Note (search: {headword})\n{definition}")
+
+                # 2. Search Dictionary FTS
                 table_exists = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_fts'"
                 ).fetchone()
                 if not table_exists:
                     continue
 
-                # FTS5 search
+                # FTS5 search with BM25 ranking
                 res = conn.execute(
-                    "SELECT headword, definition FROM dictionary_fts WHERE dictionary_fts MATCH ? LIMIT 10",
-                    (query,)
+                    "SELECT headword, definition FROM dictionary_fts WHERE dictionary_fts MATCH ? ORDER BY rank LIMIT 10",
+                    (sanitized_query,)
                 ).fetchall()
+                
                 if res:
-                    name = os.path.basename(path).replace(".db", "").upper()
                     for headword, definition in res:
-                        def_text = definition
-                        results.append(f"### 📖 {name} (search: {headword})\n{def_text}")
-            except Exception:
+                        results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
+            except Exception as e:
+                # In case of FTS syntax error even with sanitization, fallback to simple search or skip
                 continue
 
         return "\n\n---\n\n".join(results)

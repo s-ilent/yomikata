@@ -23,28 +23,39 @@ from PyQt6.QtCore import QSettings
 
 
 def create_fts_index(db_path):
-    """Create or rebuild FTS5 index for an existing dictionary."""
+    """Create or rebuild FTS5 index for an existing dictionary using external content."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Check if dictionary table exists
-    table_exists = cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'"
-    ).fetchone()
-    if not table_exists:
+    # Detect which table to index
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'").fetchone():
+        table_name = "dictionary"
+        fts_table = "dictionary_fts"
+        rowid_col = "id"
+    elif cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
+        table_name = "personal_dict"
+        fts_table = "personal_dict_fts"
+        rowid_col = "rowid" # personal_dict doesn't have an explicit 'id' column, uses default rowid
+    else:
         conn.close()
         return 0
 
-    # Drop and recreate FTS table
-    cursor.execute("DROP TABLE IF EXISTS dictionary_fts")
-    cursor.execute("CREATE VIRTUAL TABLE dictionary_fts USING fts5(headword, definition)")
-    conn.commit()
-
-    # Populate from dictionary table
-    cursor.execute(
-        "INSERT INTO dictionary_fts(rowid, headword, definition) SELECT rowid, headword, definition FROM dictionary"
-    )
-    count = cursor.execute("SELECT COUNT(*) FROM dictionary_fts").fetchone()[0]
+    # Drop and recreate FTS table as external content with trigram tokenizer
+    cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+    cursor.execute(f"""
+        CREATE VIRTUAL TABLE {fts_table} USING fts5(
+            headword, 
+            definition, 
+            content='{table_name}', 
+            content_rowid='{rowid_col}',
+            tokenize='trigram'
+        )
+    """)
+    
+    # Rebuild the index
+    cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+    
+    count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
     conn.commit()
     conn.close()
 
@@ -103,7 +114,8 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None, 
             headword,
             definition,
             content='dictionary',
-            content_rowid='id'
+            content_rowid='id',
+            tokenize='trigram'
         )
     """)
     conn.commit()

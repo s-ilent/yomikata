@@ -1,6 +1,8 @@
 import os
 import sqlite3
 
+import fugashi
+
 
 class DatabaseManager:
     def __init__(self, main_db="yomikata.db"):
@@ -99,6 +101,16 @@ class DatabaseManager:
         ).fetchone()
         return res[0] if res else None
 
+    def get_lemma(self, word):
+        """Get the base lemma form of a word using Fugashi."""
+        tagger = fugashi.Tagger()
+        tokens = tagger(word)
+        if tokens:
+            first = tokens[0]
+            if first.feature and first.feature.lemma:
+                return first.feature.lemma
+        return None
+
     def lookup(self, word, lemma, extra_paths=None):
         results = []
 
@@ -124,6 +136,31 @@ class DatabaseManager:
                         results.append(f"### 📖 {name}\n{res[0]}")
             except Exception:
                 continue
+
+        # 3. De-inflection fallback: if no results, try lemma via Fugashi
+        if not results:
+            inflected_lemma = self.get_lemma(word)
+            if inflected_lemma and inflected_lemma != word:
+                # Search personal dict with lemma
+                note = self.get_personal_note(inflected_lemma)
+                if note:
+                    results.append(f"### 📝 Personal Note (de-inflected)\n{note}")
+
+                # Search dictionary DBs with lemma
+                for path in set(search_paths):
+                    if not os.path.exists(path):
+                        continue
+                    try:
+                        conn = self.get_conn(path)
+                        res = conn.execute(
+                            "SELECT definition FROM dictionary WHERE headword = ?",
+                            (inflected_lemma,)
+                        ).fetchone()
+                        if res:
+                            name = os.path.basename(path).replace(".db", "").upper()
+                            results.append(f"### 📖 {name} (de-inflected)\n{res[0]}")
+                    except Exception:
+                        continue
 
         return "\n\n---\n\n".join(results)
 

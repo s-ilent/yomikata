@@ -5,6 +5,7 @@ import sys
 import markdown
 import qtawesome as qta
 from PyQt6.QtCore import QDateTime, QSettings, Qt
+from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
@@ -249,7 +250,7 @@ class YomikataApp(QMainWindow):
         if obj is self.input_area and event.type() == event.Type.KeyPress:
             if (
                 event.key() == Qt.Key.Key_Return
-                and event.modifiers() == Qt.Modifier.CONTROL
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier
             ):
                 self.analyze_text()
                 return True

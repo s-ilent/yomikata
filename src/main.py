@@ -34,7 +34,7 @@ from database import (
 )
 from flow_layout import FlowLayout
 from processor import TextProcessor
-from style import DARK_STYLE
+from style import build_stylesheet, get_font_size, CATPPUCCIN_MOCHA as CAT
 from widgets import PunctuationWidget, SettingsDialog, TokenWidget
 
 # AI Prompt Templates
@@ -98,12 +98,17 @@ class YomikataApp(QMainWindow):
         self.debug_logs = []  # Store logs for the settings menu
         self.db = DatabaseManager()
         self.processor = TextProcessor()
+        
+        # Load font size preference
+        self.settings = QSettings("Yomikata", "Settings")
+        self.font_size = int(self.settings.value("font_size", 14))
+        
         self.init_ui()
 
     def init_ui(self):
         self.setWindowTitle("Yomikata Japanese Assistant")
         self.resize(1200, 850)
-        self.setStyleSheet(DARK_STYLE)
+        self.setStyleSheet(build_stylesheet(font_base=self.font_size))
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -296,6 +301,27 @@ class YomikataApp(QMainWindow):
             # or update the UI based on new settings
             print("Settings saved!")
 
+    def update_font_size(self, size: int):
+        """Update font size and regenerate stylesheet."""
+        self.font_size = size
+        self.settings.setValue("font_size", size)
+        self.setStyleSheet(build_stylesheet(font_base=size))
+        # Update token display sizes
+        self._update_token_font_sizes()
+
+    def _update_token_font_sizes(self):
+        """Update font sizes in existing token widgets."""
+        kanji_size = get_font_size("kanji", self.font_size)
+        kana_size = get_font_size("kana", self.font_size)
+        romaji_size = get_font_size("romaji", self.font_size)
+
+        for i in range(self.matrix_layout.count()):
+            widget = self.matrix_layout.itemAt(i).widget()
+            if widget and isinstance(widget, TokenWidget):
+                widget.romaji_lbl.setStyleSheet(f"font-size: {romaji_size}px; color: #6272a4;")
+                widget.kana_lbl.setStyleSheet(f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;")
+                widget.surface_lbl.setStyleSheet(f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;")
+
     def save_ai_to_dict(self):
         """Modified to save the COMBINED phrase, not just one word."""
         if self.selection_list and hasattr(self, "last_ai_response"):
@@ -305,7 +331,7 @@ class YomikataApp(QMainWindow):
             save_to_personal_dict(combined_surface, self.last_ai_response)
 
             self.dict_display.append(
-                f"<br><i style='color:#4caf50;'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
+                f"<br><i style='color:{CAT["green"]};'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
             )
             self.save_ai_btn.setVisible(False)
 
@@ -328,7 +354,7 @@ class YomikataApp(QMainWindow):
         if ok and text:
             save_to_personal_dict(combined_surface, text)
             self.dict_display.append(
-                f"<br><i style='color:#4caf50;'>✓ Note saved for '{combined_surface}'</i>"
+                f"<br><i style='color:{CAT["green"]};'>✓ Note saved for '{combined_surface}'</i>"
             )
             self.update_dictionary_view()
 
@@ -395,12 +421,13 @@ class YomikataApp(QMainWindow):
     def apply_custom_css(self, html):
         return f"""
         <style>
-            body {{ font-family: 'Shippori Mincho', serif; color: #e0e0e0; }}
-            h1 {{ color: #536dfe; font-size: 28px; margin-bottom: 0; }}
-            h3 {{ color: #ff4081; border-bottom: 1px solid #333; padding-bottom: 5px; }}
-            code {{ background-color: #2a2a2a; color: #ff4081; padding: 2px 4px; border-radius: 4px; }}
-            strong {{ color: #e0e0e0; }}
-            hr {{ border: 0; border-top: 1px solid #333; }}
+            body {{ font-family: 'Shippori Mincho', serif; color: {CAT["foreground"]}; }}
+            h1 {{ color: {CAT["blue"]}; font-size: 28px; margin-bottom: 0; }}
+            h3 {{ color: {CAT["mauve"]}; border-bottom: 1px solid {CAT["surface_hover"]}; padding-bottom: 5px; }}
+            code {{ background-color: {CAT["surface"]}; color: {CAT["mauve"]}; padding: 2px 4px; border-radius: 4px; }}
+            strong {{ color: {CAT["foreground"]}; }}
+            hr {{ border: 0; border-top: 1px solid {CAT["surface_hover"]}; }}
+            a {{ color: {CAT["blue"]}; }}
         </style>
         {html}
         """
@@ -451,9 +478,9 @@ class YomikataApp(QMainWindow):
         # Add some basic CSS to the HTML to make it look nice in the dark theme
         styled_html = f"""
         <style>
-            b, strong {{ color: #536dfe; }}
+            b, strong {{ color: {CAT["blue"]}; }}
             li {{ margin-bottom: 5px; }}
-            code {{ background-color: #333; padding: 2px; }}
+            code {{ background-color: {CAT["surface"]}; padding: 2px; }}
         </style>
         {html_content}
         """
@@ -465,7 +492,7 @@ class YomikataApp(QMainWindow):
         self.log_debug(f"AI ERROR: {err}")
         self.progress_bar.setVisible(False)
         self.ai_btn.setEnabled(True)
-        self.dict_display.append(f"<p style='color:red;'>{err}</p>")
+        self.dict_display.append(f"<p style='color:{CAT["red"]};'>{err}</p>")
 
     def do_definition_search(self):
         """Search inside definitions using FTS5."""

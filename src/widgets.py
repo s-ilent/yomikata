@@ -1,6 +1,8 @@
 import os
 import sqlite3
 
+from style import CATPPUCCIN_MOCHA as CAT
+
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSignal as QtSignal
 from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QPainter
 from PyQt6.QtWidgets import (
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QProgressBar,
     QPushButton,
+    QSlider,
     QStyle,
     QStyleOption,
     QTabWidget,
@@ -291,7 +294,7 @@ class PunctuationWidget(QLabel):
     def __init__(self, text):
         super().__init__(text)
         self.setStyleSheet(
-            "font-size: 20px; color: #ffffff; padding: 0px 5px; margin-top: 15px;"
+            f"font-size: 20px; color: {CAT['foreground']}; padding: 0px 5px; margin-top: 15px;"
         )
         self.setAlignment(Qt.AlignmentFlag.AlignBottom)
 
@@ -366,6 +369,33 @@ class SettingsDialog(QDialog):
 
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
+
+        # --- TAB 0: Display ---
+        display_tab = QWidget()
+        display_layout = QFormLayout(display_tab)
+
+        # Font size control
+        font_size_layout = QHBoxLayout()
+        self.font_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_size_slider.setMinimum(10)
+        self.font_size_slider.setMaximum(24)
+        self.font_size_slider.setValue(14)
+        self.font_size_value_label = QLabel("14px")
+        self.font_size_slider.valueChanged.connect(
+            lambda v: self.font_size_value_label.setText(f"{v}px")
+        )
+        font_size_layout.addWidget(self.font_size_slider)
+        font_size_layout.addWidget(self.font_size_value_label)
+        
+        # Load saved font size from parent
+        if parent and hasattr(parent, 'settings'):
+            saved_size = parent.settings.value("font_size")
+            if saved_size:
+                self.font_size_slider.setValue(int(saved_size))
+                self.font_size_value_label.setText(f"{saved_size}px")
+        
+        display_layout.addRow("Font Size:", font_size_layout)
+        self.tabs.addTab(display_tab, "Display")
 
         # --- TAB 1: Configuration ---
         config_tab = QWidget()
@@ -653,4 +683,11 @@ class SettingsDialog(QDialog):
         self.settings.setValue("api_url", self.api_url.text())
         self.settings.setValue("api_key", self.api_key.text())
         self.settings.setValue("ai_model", self.ai_model.text())
+        
+        # Save font size to parent app if it has the update method
+        font_size = self.font_size_slider.value()
+        self.settings.setValue("font_size", font_size)
+        if self.parent() and hasattr(self.parent(), 'update_font_size'):
+            self.parent().update_font_size(font_size)
+        
         self.accept()

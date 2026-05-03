@@ -22,23 +22,90 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QSettings
 
 
-def import_dictionary_file(source_path, target_db_path, progress_callback=None):
+def create_fts_index(db_path):
+    """Create or rebuild FTS5 index for an existing dictionary."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Check if dictionary table exists
+    table_exists = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'"
+    ).fetchone()
+    if not table_exists:
+        conn.close()
+        return 0
+
+    # Drop and recreate FTS table
+    cursor.execute("DROP TABLE IF EXISTS dictionary_fts")
+    cursor.execute("CREATE VIRTUAL TABLE dictionary_fts USING fts5(headword, definition)")
+    conn.commit()
+
+    # Populate from dictionary table
+    cursor.execute(
+        "INSERT INTO dictionary_fts(rowid, headword, definition) SELECT rowid, headword, definition FROM dictionary"
+    )
+    count = cursor.execute("SELECT COUNT(*) FROM dictionary_fts").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    return count
+
+
+def import_dictionary_file(source_path, target_db_path, progress_callback=None, debug_callback=None):
     """
     Import entries from an Eijiro-style text file into a SQLite database.
     Handles both UTF-8 and CP932 (Shift-JIS) encoding.
 
-    Returns the number of entries imported.
+    Returns (count, debug_info) tuple.
+    debug_info is a list of strings for logging.
     """
-    # Initialize target database
+    # Helper to log
+    def log(msg):
+        if debug_callback:
+            debug_callback(msg)
+        print(f"IMPORT: {msg}", file=__import__('sys').stderr)
+
+    # Initialize target database with optimizations
     conn = sqlite3.connect(target_db_path)
     cursor = conn.cursor()
+
+    # Load sqlite-zstd for compression
+    try:
+        import sqlite_zstd
+        conn.enable_load_extension(True)
+        sqlite_zstd.load(conn)
+        log("sqlite-zstd loaded successfully")
+    except Exception as e:
+        log(f"sqlite-zstd load failed: {e}")
+
+    # Set page size to 4096 (default) and enable auto_vacuum
+    cursor.execute("PRAGMA page_size = 4096")
+    cursor.execute("PRAGMA journal_mode = WAL")
+    cursor.execute("PRAGMA auto_vacuum = FULL")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS dictionary (
+            id INTEGER PRIMARY KEY,
             headword TEXT,
             definition TEXT
         )
     """)
+    log("Dictionary table created")
+
+    # Enable transparent compression on definition column - do this AFTER inserting data
+    # (must have data first for sqlite-zstd to validate the chooser)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+    conn.commit()
+
+    # Create FTS5 as external content (references dictionary table, doesn't duplicate data)
+    cursor.execute("DROP TABLE IF EXISTS dictionary_fts")
+    cursor.execute("""
+        CREATE VIRTUAL TABLE dictionary_fts USING fts5(
+            headword,
+            definition,
+            content='dictionary',
+            content_rowid='id'
+        )
+    """)
     conn.commit()
 
     # Detect encoding
@@ -57,10 +124,11 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None):
             if line.startswith("■"):
                 parts = line.lstrip("■").split(" : ", 1)
                 if len(parts) == 2:
+                    # id is auto-generated, just headword and definition
                     entries.append((parts[0].strip(), parts[1].strip()))
 
             if len(entries) >= 20000:
-                cursor.executemany("INSERT INTO dictionary VALUES (?, ?)", entries)
+                cursor.executemany("INSERT INTO dictionary (headword, definition) VALUES (?, ?)", entries)
                 conn.commit()
                 total += len(entries)
                 entries = []
@@ -69,10 +137,39 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None):
 
     # Insert remaining
     if entries:
-        cursor.executemany("INSERT INTO dictionary VALUES (?, ?)", entries)
+        cursor.executemany("INSERT INTO dictionary (headword, definition) VALUES (?, ?)", entries)
         total += len(entries)
 
     conn.commit()
+
+    # Rebuild External Content FTS5 index after inserting data
+    # This populates the FTS index from the content table
+    try:
+        cursor.execute("INSERT INTO dictionary_fts(dictionary_fts) VALUES('rebuild')")
+        conn.commit()
+        log("FTS5 external content index rebuilt successfully")
+    except Exception as e:
+        log(f"FTS5 rebuild failed: {e}")
+
+    # Enable transparent compression AFTER inserting data
+    try:
+        import json
+        config = {
+            "table": "dictionary",
+            "column": "definition",
+            "compression_level": 19,
+            "dict_chooser": "'a'"
+        }
+        cursor.execute("SELECT zstd_enable_transparent(?)", (json.dumps(config),))
+        # Run maintenance to compress existing data
+        cursor.execute("SELECT zstd_incremental_maintenance(null, 1)")
+        log("Transparent compression enabled")
+    except Exception as e:
+        log(f"Transparent compression failed: {e}")
+
+    # Run VACUUM to shrink file after compression
+    cursor.execute("VACUUM")
+    log("VACUUM done - file should be smaller now")
     conn.close()
 
     if progress_callback:
@@ -148,12 +245,22 @@ class ImportWorker(QThread):
 
     def run(self):
         try:
+            import sys
+            debug_logs = []
+            def debug_cb(msg):
+                debug_logs.append(msg)
+                print(f"IMPORT: {msg}", file=sys.stderr)
+
             count = import_dictionary_file(
                 self.source_path,
                 self.target_db_path,
-                lambda p: self.progress.emit(p)
+                lambda p: self.progress.emit(p),
+                debug_cb
             )
             self.finished.emit(count)
+            # Send debug logs to parent if possible
+            if self.parent() and hasattr(self.parent(), "debug_logs"):
+                self.parent().debug_logs.extend(debug_logs)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -287,10 +394,14 @@ class SettingsDialog(QDialog):
         remove_dict_btn = QPushButton("Remove Selected")
         remove_dict_btn.clicked.connect(self.remove_dictionary)
 
+        rebuild_fts_btn = QPushButton("Rebuild Search Index")
+        rebuild_fts_btn.clicked.connect(self.rebuild_fts_index)
+
         dict_layout.addWidget(QLabel("Active Dictionaries:"))
         dict_layout.addWidget(self.dict_list)
         dict_layout.addWidget(add_dict_btn)
         dict_layout.addWidget(remove_dict_btn)
+        dict_layout.addWidget(rebuild_fts_btn)
         self.tabs.addTab(dict_tab, "Dictionaries")
 
         # --- TAB 4: Import ---
@@ -393,6 +504,28 @@ class SettingsDialog(QDialog):
             dicts.remove(current.text())
             self.settings.setValue("extra_dictionaries", dicts)
             self.refresh_dict_list()
+
+    def rebuild_fts_index(self):
+        """Rebuild FTS index for all active dictionaries."""
+        current = self.dict_list.currentItem()
+        if current:
+            db_path = current.text()
+        else:
+            # Use main db
+            db_path = "yomikata.db"
+
+        try:
+            count = create_fts_index(db_path)
+            if current:
+                msg = f"✓ Search index rebuilt: {count} entries indexed."
+            else:
+                msg = f"✓ Search index rebuilt for personal dict: {count} entries."
+        except Exception as e:
+            msg = f"Error: {e}"
+
+        # Show message - could add a status label or use QMessageBox
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Rebuild Index", msg)
 
     def clear_debug_logs(self):
         if self.parent() and hasattr(self.parent(), "debug_logs"):

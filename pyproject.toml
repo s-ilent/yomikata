@@ -14,5 +14,9 @@ dependencies = [
     "pyqt6>=6.11.0",
     "qtawesome>=1.4.2",
     "requests>=2.33.1",
+    "sqlite-zstd",
     "unidic-lite>=1.0.8",
 ]
+
+[tool.uv.sources]
+sqlite-zstd = { git = "https://github.com/phiresky/sqlite-zstd.git", subdirectory = "python" }

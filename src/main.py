@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -20,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ai_worker import AIWorker
-from database import DatabaseManager, get_personal_note, lookup_word, save_to_personal_dict
+from database import DatabaseManager, get_personal_note, lookup_word, save_to_personal_dict, search_definitions
 from flow_layout import FlowLayout
 from processor import TextProcessor
 from style import DARK_STYLE
@@ -83,6 +84,16 @@ class YomikataApp(QMainWindow):
         self.dict_display = QTextEdit()
         self.dict_display.setReadOnly(True)
 
+        # Search box for FTS
+        search_layout = QHBoxLayout()
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search definitions...")
+        self.search_box.returnPressed.connect(self.do_definition_search)
+        search_btn = QPushButton("Search")
+        search_btn.clicked.connect(self.do_definition_search)
+        search_layout.addWidget(self.search_box)
+        search_layout.addWidget(search_btn)
+
         # --- AI and Settings Buttons ---
         ai_controls_layout = QHBoxLayout()
 
@@ -136,6 +147,7 @@ class YomikataApp(QMainWindow):
         self.progress_bar.setFixedHeight(4)
 
         right_layout.addWidget(QLabel("<b>DICTIONARY REVEAL</b>"))
+        right_layout.addLayout(search_layout)
         right_layout.addWidget(self.dict_display)
         right_layout.addLayout(ai_controls_layout)
 
@@ -371,6 +383,24 @@ class YomikataApp(QMainWindow):
         self.progress_bar.setVisible(False)
         self.ai_btn.setEnabled(True)
         self.dict_display.append(f"<p style='color:red;'>{err}</p>")
+
+    def do_definition_search(self):
+        """Search inside definitions using FTS5."""
+        query = self.search_box.text().strip()
+        if not query:
+            return
+
+        extra_dicts = QSettings("Yomikata", "Settings").value("extra_dictionaries", [])
+        results = search_definitions(query, extra_dicts)
+
+        markdown_text = f"# Search: {query}\n\n"
+        if results:
+            markdown_text += results
+        else:
+            markdown_text += "_No matches found in definitions._"
+
+        html = markdown.markdown(markdown_text, extensions=["extra"])
+        self.dict_display.setHtml(self.apply_custom_css(html))
 
 
 if __name__ == "__main__":

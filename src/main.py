@@ -28,7 +28,9 @@ from ai_worker import AIWorker
 from database import (
     DatabaseManager,
     get_personal_note,
+    get_history,
     lookup_word,
+    save_history,
     save_to_personal_dict,
     search_definitions,
 )
@@ -210,6 +212,14 @@ class YomikataApp(QMainWindow):
         self.edit_note_btn.setObjectName("secondary-btn")
         self.edit_note_btn.setMinimumHeight(40)
 
+        self.history_btn = QPushButton()
+        self.history_btn.setIcon(qta.icon("fa5s.clock", color="white"))
+        self.history_btn.setFixedSize(40, 40)
+        self.history_btn.setToolTip("History")
+        self.history_btn.clicked.connect(self.show_history)
+        self.history_btn.setObjectName("secondary-btn")
+        self.history_btn.setStyleSheet("padding: 0;")
+
         self.settings_btn = QPushButton()
         self.settings_btn.setIcon(qta.icon("fa5s.cog", color="white"))
         self.settings_btn.setFixedSize(40, 40)
@@ -236,6 +246,7 @@ class YomikataApp(QMainWindow):
         note_btn_layout = QHBoxLayout()
         note_btn_layout.addWidget(self.save_ai_btn)
         note_btn_layout.addWidget(self.edit_note_btn, stretch=1)
+        note_btn_layout.addWidget(self.history_btn)
         note_btn_layout.addWidget(self.settings_btn)
         right_layout.addLayout(note_btn_layout)
 
@@ -281,6 +292,11 @@ class YomikataApp(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
+        # Save to history before processing
+        if text:
+            max_entries = int(self.settings.value("history_size", 50))
+            save_history(text, max_entries)
+
         tokens = self.processor.tokenize(text)
         punct_chars = "、。「」！？（）()., "
 
@@ -300,6 +316,116 @@ class YomikataApp(QMainWindow):
             # You could add logic here to refresh the AIWorker
             # or update the UI based on new settings
             print("Settings saved!")
+
+    def show_history(self):
+        """Show history dialog with previously analyzed texts."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QPushButton, QHBoxLayout,
+            QScrollArea, QFrame, QLabel, QSizePolicy
+        )
+        from PyQt6.QtCore import Qt
+
+        # Get max history entries from settings (default 50)
+        max_entries = int(self.settings.value("history_size", 50))
+        entries = get_history(limit=max_entries)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Text History")
+        dialog.resize(700, 500)
+
+        # Apply catppuccin styling
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {CAT["background"]};
+                color: {CAT["foreground"]};
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QPushButton {{
+                background-color: {CAT["surface"]};
+                color: {CAT["foreground"]};
+                border: 1px solid {CAT["surface_hover"]};
+                border-radius: 4px;
+                padding: 8px 16px;
+            }}
+            QPushButton:hover {{
+                background-color: {CAT["surface_hover"]};
+            }}
+        """)
+
+        layout = QVBoxLayout(dialog)
+
+        # Scroll area with history cards
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none;")
+
+        # Container for history cards
+        cards_container = QWidget()
+        cards_layout = QVBoxLayout(cards_container)
+        cards_layout.setSpacing(10)
+        cards_layout.addStretch()
+
+        # Create a card for each history entry
+        entry_map = {}  # Map card widget to original text
+
+        for text, timestamp in entries:
+            # Create card frame
+            card = QFrame()
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {CAT["surface"]};
+                    border: 1px solid {CAT["surface_hover"]};
+                    border-radius: 6px;
+                    padding: 10px;
+                }}
+                QFrame:hover {{
+                    border: 1px solid {CAT["selection"]};
+                }}
+            """)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            card_layout = QVBoxLayout(card)
+
+            # Timestamp label (smaller, muted)
+            ts_label = QLabel(str(timestamp))
+            ts_label.setStyleSheet(f"color: {CAT['comment']}; font-size: 11px;")
+            card_layout.addWidget(ts_label)
+
+            # Text content (with word wrap)
+            text_label = QLabel(text)
+            text_label.setStyleSheet(f"color: {CAT['foreground']}; font-size: {self.font_size}px;")
+            text_label.setWordWrap(True)
+            text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            card_layout.addWidget(text_label)
+
+            cards_layout.insertWidget(cards_layout.count() - 1, card)
+            entry_map[card] = text
+
+            # Click handler
+            card.mousePressEvent = lambda event, t=text, w=card: self._on_history_card_click(t, w, dialog)
+
+        scroll.setWidget(cards_container)
+        layout.addWidget(scroll, stretch=1)
+
+        # Close button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+        dialog.exec()
+
+    def _on_history_card_click(self, text, card_widget, dialog):
+        """Handle history card click - restore text and analyze."""
+        self.input_area.setPlainText(text)
+        self.analyze_text()  # Automatically analyze
+        dialog.close()
 
     def update_font_size(self, size: int):
         """Update font size and regenerate stylesheet."""

@@ -418,7 +418,35 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(config_tab, "AI Configuration")
 
-        # --- TAB 2: Debug Logs ---
+        # --- TAB 2: History ---
+        history_tab = QWidget()
+        history_layout = QFormLayout(history_tab)
+
+        # History size control
+        history_size_layout = QHBoxLayout()
+        self.history_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.history_size_slider.setMinimum(10)
+        self.history_size_slider.setMaximum(100)
+        self.history_size_slider.setSingleStep(10)
+        self.history_size_slider.setValue(50)
+        self.history_size_value_label = QLabel("50 entries")
+        self.history_size_slider.valueChanged.connect(
+            lambda v: self.history_size_value_label.setText(f"{v} entries")
+        )
+
+        # Load saved history size
+        saved_history = self.settings.value("history_size")
+        if saved_history:
+            self.history_size_slider.setValue(int(saved_history))
+            self.history_size_value_label.setText(f"{saved_history} entries")
+
+        history_size_layout.addWidget(self.history_size_slider)
+        history_size_layout.addWidget(self.history_size_value_label)
+        history_layout.addRow("History Size:", history_size_layout)
+
+        self.tabs.addTab(history_tab, "History")
+
+        # --- TAB 3: Debug Logs ---
         debug_tab = QWidget()
         debug_layout = QVBoxLayout(debug_tab)
 
@@ -689,5 +717,9 @@ class SettingsDialog(QDialog):
         self.settings.setValue("font_size", font_size)
         if self.parent() and hasattr(self.parent(), 'update_font_size'):
             self.parent().update_font_size(font_size)
-        
+
+        # Save history size
+        history_size = self.history_size_slider.value()
+        self.settings.setValue("history_size", history_size)
+
         self.accept()

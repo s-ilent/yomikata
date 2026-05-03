@@ -73,6 +73,17 @@ class DatabaseManager:
         # Main dictionary (Eijiro)
         cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+
+        # History for previously analyzed texts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                normalized_text TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_normalized ON history(normalized_text)")
         conn.commit()
 
     def save_personal_note(self, word, definition):
@@ -100,6 +111,55 @@ class DatabaseManager:
             (word,)
         ).fetchone()
         return res[0] if res else None
+
+    def save_history(self, text: str, max_entries: int = 50):
+        """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
+        import re
+        from PyQt6.QtCore import QDateTime
+        # Normalize: collapse all whitespace to single space, strip
+        normalized = re.sub(r'\s+', ' ', text).strip()
+        if not normalized:
+            return
+
+        conn = self.get_conn(self.main_db)
+        cursor = conn.cursor()
+
+        # Check if this normalized text already exists
+        existing = cursor.execute(
+            "SELECT id FROM history WHERE normalized_text = ?",
+            (normalized,)
+        ).fetchone()
+
+        if existing:
+            # Update timestamp to move to top
+            cursor.execute(
+                "UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?",
+                (existing[0],)
+            )
+        else:
+            # Insert new entry
+            cursor.execute(
+                "INSERT INTO history (text, normalized_text) VALUES (?, ?)",
+                (text, normalized)
+            )
+
+            # Keep only last max_entries entries
+            cursor.execute("""
+                DELETE FROM history WHERE id NOT IN (
+                    SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
+                )
+            """, (max_entries,))
+
+        conn.commit()
+
+    def get_history(self, limit: int = 50):
+        """Get recent history entries ordered by timestamp descending."""
+        conn = self.get_conn(self.main_db)
+        res = conn.execute(
+            "SELECT text, timestamp FROM history ORDER BY timestamp DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        return res
 
     def get_lemma(self, word):
         """Get the base lemma form of a word using Fugashi."""
@@ -284,6 +344,16 @@ def save_to_personal_dict(word, definition):
 def get_personal_note(word):
     """Get a personal note for a word."""
     return _get_db().get_personal_note(word)
+
+
+def save_history(text: str, max_entries: int = 50):
+    """Backward-compatible save history function."""
+    _get_db().save_history(text, max_entries)
+
+
+def get_history(limit: int = 50):
+    """Backward-compatible get history function."""
+    return _get_db().get_history(limit)
 
 
 def search_definitions(query, extra_dicts=None):

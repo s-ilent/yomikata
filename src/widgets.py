@@ -2,6 +2,7 @@ import os
 import sqlite3
 
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSignal as QtSignal
+from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QPainter
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -14,6 +15,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QProgressBar,
     QPushButton,
+    QStyle,
+    QStyleOption,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -288,7 +291,7 @@ class PunctuationWidget(QLabel):
     def __init__(self, text):
         super().__init__(text)
         self.setStyleSheet(
-            "font-size: 20px; color: #555; padding: 0px; margin-top: 15px;"
+            "font-size: 20px; color: #ffffff; padding: 0px 5px; margin-top: 15px;"
         )
         self.setAlignment(Qt.AlignmentFlag.AlignBottom)
 
@@ -299,14 +302,15 @@ class TokenWidget(QFrame):
     def __init__(self, token_data):
         super().__init__()
         self.setObjectName("TokenCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.data = token_data
         self.is_selected = False  # Tracking state
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(2, 4, 2, 4) # Reduced margins
         layout.setSpacing(0)
 
-        # Labels as before...
+        # Labels
         self.romaji_lbl = QLabel(token_data["romaji"])
         self.romaji_lbl.setObjectName("Romaji")
         self.romaji_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -320,20 +324,32 @@ class TokenWidget(QFrame):
         layout.addWidget(self.romaji_lbl)
         layout.addWidget(self.kana_lbl)
         layout.addWidget(self.surface_lbl)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
-        fm = self.surface_lbl.fontMetrics()
-        width = fm.boundingRect(token_data["surface"]).width() + 20
-        self.setFixedWidth(max(40, width))
+        # Accurate width calculation matching CSS exactly
+        f_romaji = QFont(); f_romaji.setPixelSize(10)
+        f_kana = QFont(); f_kana.setPixelSize(12); f_kana.setBold(True)
+        f_surface = QFont(); f_surface.setPixelSize(20); f_surface.setWeight(QFont.Weight.Medium)
+        
+        w_romaji = QFontMetrics(f_romaji).horizontalAdvance(token_data["romaji"])
+        w_kana = QFontMetrics(f_kana).horizontalAdvance(token_data["kana"])
+        w_surface = QFontMetrics(f_surface).horizontalAdvance(token_data["surface"])
+        
+        # Reduced padding (total horizontal padding: 8px)
+        width = max(w_romaji, w_kana, w_surface) + 8
+        self.setFixedWidth(max(20, width))
 
     def set_highlight(self, state):
         self.is_selected = state
-        if state:
-            self.setStyleSheet(
-                "QFrame#TokenCard { border: 2px solid #3d5afe; background-color: #2a2a2a; }"
-            )
-        else:
-            self.setStyleSheet("")  # Reverts to stylesheet default
+        self.setProperty("selected", state)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def paintEvent(self, event):
+        opt = QStyleOption()
+        opt.initFrom(self)
+        p = QPainter(self)
+        self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, p, self)
 
     def mousePressEvent(self, event):
         # Check if Control key is held

@@ -1,9 +1,11 @@
+import os
 import re
 import sys
 
 import markdown
 import qtawesome as qta
 from PyQt6.QtCore import QDateTime, QSettings, Qt
+from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -46,6 +48,7 @@ class YomikataApp(QMainWindow):
 
         # --- LEFT SIDE (Reading & Input) ---
         left_container = QWidget()
+        left_container.setObjectName("leftPanel")
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(15, 15, 15, 15)
 
@@ -79,6 +82,7 @@ class YomikataApp(QMainWindow):
 
         # --- RIGHT SIDE (Dictionary & AI) ---
         right_container = QWidget()
+        right_container.setObjectName("rightPanel")
         right_layout = QVBoxLayout(right_container)
 
         self.dict_display = QTextEdit()
@@ -89,10 +93,15 @@ class YomikataApp(QMainWindow):
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search definitions...")
         self.search_box.returnPressed.connect(self.do_definition_search)
-        search_btn = QPushButton("Search")
+        search_btn = QPushButton()
+        search_btn.setIcon(qta.icon("fa5s.search", color="white"))
+        search_btn.setFixedSize(40, 40)
+        search_btn.setToolTip("Search")
         search_btn.clicked.connect(self.do_definition_search)
         search_layout.addWidget(self.search_box)
         search_layout.addWidget(search_btn)
+        search_btn.setObjectName("primary-btn")
+        search_btn.setStyleSheet("padding: 0;")
 
         # --- AI and Settings Buttons ---
         ai_controls_layout = QHBoxLayout()
@@ -107,18 +116,12 @@ class YomikataApp(QMainWindow):
 
         # Settings Button (The Gear)
         self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(qta.icon("fa5s.cog", color="#e0e0e0"))
+        self.settings_btn.setIcon(qta.icon("fa5s.cog", color="white"))
         self.settings_btn.setFixedSize(40, 40)  # Keep it square
         self.settings_btn.setToolTip("Settings")
         self.settings_btn.clicked.connect(self.open_settings)
-        self.settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2a2a2a;
-                border: 1px solid #444;
-                border-radius: 6px;
-            }
-            QPushButton:hover { background-color: #333; border: 1px solid #555; }
-        """)
+        self.settings_btn.setObjectName("secondary-btn")
+        self.settings_btn.setStyleSheet("padding: 0;")
 
         ai_controls_layout.addWidget(self.ai_btn, stretch=4)  # Takes up most space
         ai_controls_layout.addWidget(self.settings_btn, stretch=1)  # The little gear
@@ -127,17 +130,13 @@ class YomikataApp(QMainWindow):
         self.save_ai_btn.setIcon(qta.icon("fa5s.save", color="white"))
         self.save_ai_btn.clicked.connect(self.save_ai_to_dict)
         self.save_ai_btn.setVisible(False)  # Hide it until AI responds
-        self.save_ai_btn.setStyleSheet(
-            "background-color: #2e7d32; color: white; padding: 8px;"
-        )
+        self.save_ai_btn.setObjectName("success-btn")
 
         self.edit_note_btn = QPushButton("Edit Note")
         self.edit_note_btn.setIcon(qta.icon("fa5s.edit", color="white"))
         self.edit_note_btn.clicked.connect(self.edit_note)
         self.edit_note_btn.setEnabled(False)
-        self.edit_note_btn.setStyleSheet(
-            "background-color: #455a64; color: white; padding: 8px;"
-        )
+        self.edit_note_btn.setObjectName("secondary-btn")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # Indeterminate "pulser"
         self.progress_bar.setVisible(False)
@@ -146,7 +145,9 @@ class YomikataApp(QMainWindow):
         )
         self.progress_bar.setFixedHeight(4)
 
-        right_layout.addWidget(QLabel("<b>DICTIONARY REVEAL</b>"))
+        dict_label = QLabel("<b>DICTIONARY REVEAL</b>")
+        dict_label.setStyleSheet("background: transparent;")
+        right_layout.addWidget(dict_label)
         right_layout.addLayout(search_layout)
         right_layout.addWidget(self.dict_display)
         right_layout.addLayout(ai_controls_layout)
@@ -316,6 +317,7 @@ class YomikataApp(QMainWindow):
     def apply_custom_css(self, html):
         return f"""
         <style>
+            body {{ font-family: 'Shippori Mincho', serif; color: #e0e0e0; }}
             h1 {{ color: #536dfe; font-size: 28px; margin-bottom: 0; }}
             h3 {{ color: #ff4081; border-bottom: 1px solid #333; padding-bottom: 5px; }}
             code {{ background-color: #2a2a2a; color: #ff4081; padding: 2px 4px; border-radius: 4px; }}
@@ -405,6 +407,14 @@ class YomikataApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Load custom fonts
+    font_dir = os.path.join(os.path.dirname(__file__), "..", "fonts")
+    if os.path.exists(font_dir):
+        for font_file in os.listdir(font_dir):
+            if font_file.endswith(".ttf") or font_file.endswith(".otf"):
+                QFontDatabase.addApplicationFont(os.path.join(font_dir, font_file))
+
     window = YomikataApp()
     window.show()
     sys.exit(app.exec())

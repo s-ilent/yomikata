@@ -32,44 +32,77 @@ def create_fts_index(db_path):
     """Create or rebuild FTS5 index for an existing dictionary using external content."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
+    total_count = 0
 
-    # Detect which table to index
+    # Handle dictionary_entries table (Yomitan/JMDict)
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'").fetchone():
+        table_name = "dictionary_entries"
+        fts_table = "dictionary_entries_fts"
+        rowid_col = "rowid"
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                headword, reading, glossary,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    # Handle legacy dictionary table (Eijiro)
     if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'").fetchone():
         table_name = "dictionary"
         fts_table = "dictionary_fts"
         rowid_col = "id"
-    elif cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                definition,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    # Handle personal_dict
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
         table_name = "personal_dict"
         fts_table = "personal_dict_fts"
         rowid_col = "rowid"
-    else:
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                definition,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    if total_count == 0:
         conn.close()
         return 0
 
-    # Drop and recreate FTS table as external content with trigram tokenizer
-    # We only index 'definition' to save significant space, as headwords have their own index
-    cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
-    cursor.execute(f"""
-        CREATE VIRTUAL TABLE {fts_table} USING fts5(
-            definition, 
-            content='{table_name}', 
-            content_rowid='{rowid_col}',
-            tokenize='trigram',
-            detail=column
-        )
-    """)
-    
-    # Rebuild the index
-    cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
-    
-    count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
-    conn.commit()
-    
-    # Optional: vacuum to recover space if this was a rebuild from a larger index
+    # Vacuum to recover space
     cursor.execute("VACUUM")
     conn.close()
 
-    return count
+    return total_count
 
 
 def import_dictionary_file(source_path, target_db_path, progress_callback=None, debug_callback=None):
@@ -488,19 +521,33 @@ class SettingsDialog(QDialog):
         rebuild_fts_btn = QPushButton("Rebuild Search Index")
         rebuild_fts_btn.clicked.connect(self.rebuild_fts_index)
 
+        optimize_btn = QPushButton("Optimize Database")
+        optimize_btn.clicked.connect(self.optimize_database)
+
         dict_layout.addWidget(QLabel("Active Dictionaries:"))
         dict_layout.addWidget(self.dict_list)
         dict_layout.addWidget(add_dict_btn)
         dict_layout.addWidget(remove_dict_btn)
         dict_layout.addWidget(rebuild_fts_btn)
+        dict_layout.addWidget(optimize_btn)
         self.tabs.addTab(dict_tab, "Dictionaries")
 
         # --- TAB 4: Import ---
         import_tab = QWidget()
         import_layout = QVBoxLayout(import_tab)
 
-        import_layout.addWidget(QLabel("Import Eijiro-style Dictionary:"))
-        import_layout.addWidget(QLabel("<small>Select a text file (UTF-8 or Shift-JIS) to import entries into a database.</small>"))
+        # Format selection
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel("Format:"))
+        self.import_format = QComboBox()
+        self.import_format.addItems(["Text (Eijiro)", "Yomitan (ZIP)", "JMDict (auto)"])
+        self.import_format.currentTextChanged.connect(self.on_import_format_changed)
+        format_layout.addWidget(self.import_format)
+        format_layout.addStretch()
+        import_layout.addLayout(format_layout)
+
+        import_layout.addWidget(QLabel("Import Dictionary:"))
+        import_layout.addWidget(QLabel("<small>Select a text or ZIP file to import entries into a database.</small>"))
 
         self.source_file_label = QLabel("No file selected")
         btn_layout = QHBoxLayout()
@@ -618,16 +665,61 @@ class SettingsDialog(QDialog):
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.information(self, "Rebuild Index", msg)
 
+    def optimize_database(self):
+        """Run VACUUM and rebuild FTS indexes."""
+        db_path = "yomikata.db"
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("VACUUM")
+
+            # Rebuild all FTS indexes
+            tables = ["personal_dict_fts", "dictionary_entries_fts"]
+            for fts_table in tables:
+                try:
+                    cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+                except Exception:
+                    pass  # Table might not exist
+
+            conn.commit()
+            conn.close()
+            msg = "✓ Database optimized (VACUUM + FTS rebuild)"
+        except Exception as e:
+            msg = f"Error: {e}"
+
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Optimize Database", msg)
+
     def clear_debug_logs(self):
         if self.parent() and hasattr(self.parent(), "debug_logs"):
             self.parent().debug_logs = []
         self.log_viewer.clear()
 
+    def on_import_format_changed(self, format_type):
+        """Handle import format dropdown change."""
+        if format_type == "Yomitan (ZIP)":
+            self.source_file_label.setText("No file selected")
+            self.import_status.setText("Select a ZIP file containing Yomitan dictionary.")
+        elif format_type == "JMDict (auto)":
+            self.source_file_label.setText("Auto-enabled (jamdict)")
+            self.import_status.setText("JMDict is auto-loaded via jamdict. No import needed.")
+        else:
+            self.source_file_label.setText("No file selected")
+            self.import_status.setText("")
+
     def select_source_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Dictionary Source File", "",
-            "Text Files (*.txt);;All Files (*)"
-        )
+        format_type = self.import_format.currentText()
+        if format_type == "Yomitan (ZIP)":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Yomitan ZIP File", "",
+                "ZIP Archives (*.zip);;All Files (*)"
+            )
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Dictionary Source File", "",
+                "Text Files (*.txt);;All Files (*)"
+            )
         if path:
             self.source_file_label.setText(os.path.basename(path))
             self.source_file = path
@@ -644,6 +736,57 @@ class SettingsDialog(QDialog):
             self.target_db.setText(path)
 
     def start_import(self):
+        format_type = self.import_format.currentText()
+
+        # JMDict doesn't need import
+        if format_type == "JMDict (auto)":
+            self.import_status.setText("JMDict is auto-enabled via jamdict. No import needed.")
+            return
+
+        # For Yomitan, handle inline
+        if format_type == "Yomitan (ZIP)":
+            if not hasattr(self, "source_file"):
+                self.import_status.setText("Please select a ZIP file first.")
+                return
+
+            target = self.target_db.text()
+            if not target or target == "yomikata.db":
+                # Default to a new dictionary file
+                import datetime
+                target = f"Yomitan_{datetime.date.today()}.db"
+                self.target_db.setText(target)
+            self.import_progress.setVisible(True)
+            self.import_progress.setRange(0, 0)  # Indeterminate
+            self.import_status.setText("Importing Yomitan...")
+
+            try:
+                import sys
+                import os
+                # Ensure src directory is in path
+                src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if src_dir not in sys.path:
+                    sys.path.insert(0, src_dir)
+
+                from yomitan_parser import import_yomitan_zip
+
+                def progress(current, total):
+                    if total > 0:
+                        self.import_progress.setRange(0, 100)
+                        self.import_progress.setValue(int(current / total * 100))
+
+                count = import_yomitan_zip(self.source_file, target, progress)
+                print(f"Yomitan import complete: {count} entries", file=sys.stderr)
+                self.import_progress.setVisible(False)
+                self.import_status.setText(f"✓ Imported {count:,} entries.")
+            except Exception as e:
+                import traceback
+                print(f"YOMITAN IMPORT ERROR: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                self.import_progress.setVisible(False)
+                self.import_status.setText(f"Error: {e}")
+            return
+
+        # Text (Eijiro) import - existing logic
         if not hasattr(self, "source_file"):
             self.import_status.setText("Please select a source file first.")
             return

@@ -2,6 +2,7 @@ import os
 import sqlite3
 
 import fugashi
+from jamdict import Jamdict
 
 
 class DatabaseManager:
@@ -9,6 +10,8 @@ class DatabaseManager:
         self.main_db = main_db
         self._conn_cache = {}  # Cache open connections
         self.init_main_db()
+        # Initialize jamdict for JMDict lookups
+        self.jam = Jamdict()
 
     def get_conn(self, db_path=None):
         if db_path is None:
@@ -84,6 +87,33 @@ class DatabaseManager:
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_normalized ON history(normalized_text)")
+
+        # Rich dictionary table for modern formats
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dictionary_entries (
+                id INTEGER PRIMARY KEY,
+                headword TEXT NOT NULL,
+                reading TEXT,
+                pos TEXT,
+                pitch_accent TEXT,
+                glossary TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                dictionary_name TEXT,
+                UNIQUE(headword, reading, dictionary_name)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword_rich ON dictionary_entries(headword)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
+
+        # FTS5 for rich definitions
+        cursor.execute("DROP TABLE IF EXISTS dictionary_entries_fts")
+        cursor.execute("""
+            CREATE VIRTUAL TABLE dictionary_entries_fts USING fts5(
+                headword, reading, glossary,
+                tokenize='trigram',
+                detail=column
+            )
+        """)
         conn.commit()
 
     def save_personal_note(self, word, definition):
@@ -171,6 +201,45 @@ class DatabaseManager:
                 return first.feature.lemma
         return None
 
+    def get_inflected_forms(self, word):
+        """Get various inflected forms of a word using Fugashi.
+
+        Returns a list of inflected forms that might exist in the dictionary,
+        making lookup more comprehensive. This includes past tense, te-form,
+        and other common inflections.
+        """
+        forms = []
+        try:
+            tagger = fugashi.Tagger()
+            tokens = tagger(word)
+            if tokens:
+                first = tokens[0]
+                # Use conjugations attribute if available
+                if hasattr(first, 'conjugations') and first.conjugations:
+                    for conj in first.conjugations:
+                        if conj.form:
+                            forms.append(conj.form)
+        except Exception:
+            pass
+        return forms
+
+    def lookup_jmdict(self, word):
+        """Look up word in JMDict via jamdict."""
+        try:
+            result = self.jam.lookup(word)
+            if not result.entries:
+                return None
+
+            entries = []
+            for entry in result.entries:
+                text = entry.text()
+                entries.append(text)
+
+            return "\n\n".join(entries)
+        except Exception as e:
+            print(f"JMDict lookup error: {e}")
+            return None
+
     def lookup(self, word, lemma, extra_paths=None):
         results = []
 
@@ -179,48 +248,73 @@ class DatabaseManager:
         if note:
             results.append(f"### 📝 Personal Note\n{note}")
 
-        # 2. Search all registered DBs
+        # 2. JMDict via jamdict
+        jm_result = self.lookup_jmdict(word)
+        if jm_result:
+            results.append(f"### 📖 JMDict\n{jm_result}")
+
+        # 3. Search all registered DBs with multiple forms
         search_paths = [self.main_db] + (extra_paths or [])
+
+        # Collect all forms to search: exact word first, then inflected, lemma last
+        forms_to_try = [word]  # Exact word highest priority
+
+        # Add inflected forms after exact word (but before lemma)
+        inflected_forms = self.get_inflected_forms(word)
+        for form in inflected_forms:
+            if form and form != word and form != lemma and form not in forms_to_try:
+                forms_to_try.append(form)
+
+        # Add lemma LAST - lowest priority (least specific match)
+        if lemma and lemma != word and lemma not in forms_to_try:
+            forms_to_try.append(lemma)
+
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
             try:
                 conn = self.get_conn(path)
-                for w in [word, lemma]:
-                    res = conn.execute(
-                        "SELECT definition FROM dictionary WHERE headword = ?",
-                        (w,)
-                    ).fetchone()
-                    if res:
-                        name = os.path.basename(path).replace(".db", "").upper()
-                        results.append(f"### 📖 {name}\n{res[0]}")
-            except Exception:
-                continue
 
-        # 3. De-inflection fallback: if no results, try lemma via Fugashi
-        if not results:
-            inflected_lemma = self.get_lemma(word)
-            if inflected_lemma and inflected_lemma != word:
-                # Search personal dict with lemma
-                note = self.get_personal_note(inflected_lemma)
-                if note:
-                    results.append(f"### 📝 Personal Note (de-inflected)\n{note}")
-
-                # Search dictionary DBs with lemma
-                for path in set(search_paths):
-                    if not os.path.exists(path):
-                        continue
-                    try:
-                        conn = self.get_conn(path)
+                # Search legacy dictionary table (if it exists)
+                try:
+                    for w in forms_to_try:
                         res = conn.execute(
                             "SELECT definition FROM dictionary WHERE headword = ?",
-                            (inflected_lemma,)
+                            (w,)
                         ).fetchone()
                         if res:
                             name = os.path.basename(path).replace(".db", "").upper()
-                            results.append(f"### 📖 {name} (de-inflected)\n{res[0]}")
-                    except Exception:
-                        continue
+                            results.append(f"### 📖 {name}\n{res[0]}")
+                except Exception:
+                    pass  # Table might not exist
+
+                # Search new dictionary_entries table (Yomitan/JMDict)
+                try:
+                    for w in forms_to_try:
+                        # Search by headword OR by reading (for Yomitan dictionaries)
+                        res = conn.execute(
+                            "SELECT glossary, reading, pos, dictionary_name, headword FROM dictionary_entries WHERE headword = ? OR reading = ?",
+                            (w, w)
+                        ).fetchone()
+                        if res:
+                            db_name = res[3] or os.path.basename(path).replace(".db", "").upper()
+                            glossary = res[0]
+                            reading = res[1] or ""
+                            pos = res[2] or ""
+                            headword = res[4]
+                            # Format nicely
+                            entry = f"**{headword}**"
+                            if reading and reading != headword:
+                                entry += f" [{reading}]"
+                            if pos:
+                                entry += f" <{pos}>"
+                            entry += f"\n\n{glossary}"
+                            results.append(f"### 📖 {db_name}\n{entry}")
+                except Exception as e:
+                    print(f"dictionary_entries error: {e}", file=__import__('sys').stderr)
+            except Exception as e:
+                print(f"Lookup error for {path}: {e}", file=__import__('sys').stderr)
+                continue
 
         return "\n\n---\n\n".join(results)
 

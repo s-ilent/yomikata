@@ -56,3 +56,7 @@ class ConfigManager:
         if path in dicts:
             dicts.remove(path)
             self.set("extra_dictionaries", dicts)
+
+    def set_extra_dictionaries(self, dicts: list):
+        """Replace the entire extra_dictionaries list (for reordering)."""
+        self.set("extra_dictionaries", dicts)

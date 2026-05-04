@@ -31,7 +31,8 @@ class DatabaseManager:
                 del self._conn_cache[db_path]
         
         # Create new connection with sqlite-zstd
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10)
+        conn.execute("PRAGMA journal_mode = WAL")
         try:
             import sqlite_zstd
             conn.enable_load_extension(True)
@@ -452,6 +453,9 @@ def create_fts_index(db_path):
     if total_count == 0:
         conn.close()
         return 0
+
+    # Commit any pending transactions before VACUUM
+    conn.commit()
 
     # Vacuum to recover space
     cursor.execute("VACUUM")

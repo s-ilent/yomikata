@@ -584,8 +584,52 @@ class YomikataApp(QMainWindow):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Yomikata - Japanese Reading Assistant")
-    parser.add_argument('--lookup', '-l', help='Lookup a word and exit')
+    parser.add_argument('--lookup', '-l', metavar='WORD', help='Lookup a word and exit')
+    parser.add_argument('--import-yomitan', '-i', nargs=2, metavar=('ZIPFILE', 'TARGET.DB'),
+                       help='Import Yomitan ZIP to SQLite DB')
     args = parser.parse_args()
+
+    if args.import_yomitan:
+        # CLI mode: import dictionary from ZIP
+        zip_path, target_db = args.import_yomitan
+        if not os.path.exists(zip_path):
+            print(f"Error: File not found: {zip_path}")
+            sys.exit(1)
+
+        print(f"Importing {zip_path} -> {target_db}...")
+
+        import sqlite3
+        conn = sqlite3.connect(target_db)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dictionary_entries (
+                headword TEXT,
+                reading TEXT,
+                pos TEXT,
+                pitch_accent TEXT,
+                glossary TEXT,
+                priority INTEGER,
+                dictionary_name TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary_entries(headword)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
+
+        from yomitan_parser import parse_yomitan_zip
+        count = 0
+        for entry in parse_yomitan_zip(zip_path):
+            conn.execute("""
+                INSERT INTO dictionary_entries (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (entry['headword'], entry['reading'], entry['pos'], entry['pitch_accent'],
+                  entry['glossary'], entry['priority'], entry['dictionary_name']))
+            count += 1
+            if count % 10000 == 0:
+                print(f"  Imported {count} entries...")
+
+        conn.commit()
+        conn.close()
+        print(f"Done. Imported {count} entries to {target_db}")
+        sys.exit(0)
 
     if args.lookup:
         # CLI mode: lookup and print result

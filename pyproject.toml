@@ -14,6 +14,7 @@ dependencies = [
     "openai>=2.33.0",
     "pykakasi>=2.3.0",
     "pyqt6>=6.11.0",
+    "pytest>=9.0.3",
     "qtawesome>=1.4.2",
     "requests>=2.33.1",
     "sqlite-zstd",

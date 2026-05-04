@@ -11,16 +11,22 @@ import jamdict_data
 
 from yomitan_parser import _flatten_content
 
+import logging
+
+# Configure logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("yomikata.database")
+
 
 class DatabaseManager:
     def __init__(self, main_db="yomikata.db"):
         self.main_db = main_db
         self._conn_cache = {}  # Cache open connections
-        self.init_main_db()
         # Initialize jamdict for JMDict lookups
         # Use jamdict-data pre-built database
         db_path = os.path.join(os.path.dirname(jamdict_data.__file__), 'jamdict.db')
         self.jam = Jamdict(db_path=db_path)
+        self.init_main_db()
 
     def get_conn(self, db_path=None):
         if db_path is None:
@@ -33,21 +39,26 @@ class DatabaseManager:
                 # Verify connection is still valid
                 conn.execute("SELECT 1")
                 return conn
-            except Exception:
-                # Connection dead, remove from cache
+            except Exception as e:
+                logger.warning(f"Connection to {db_path} dead, removing from cache: {e}")
                 del self._conn_cache[db_path]
         
+        logger.info(f"Creating new database connection: {db_path}")
         # Create new connection with sqlite-zstd
-        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10)
-        conn.execute("PRAGMA journal_mode = WAL")
         try:
-            import sqlite_zstd
-            conn.enable_load_extension(True)
-            sqlite_zstd.load(conn)
-        except Exception:
-            pass  # Extension not available
-        self._conn_cache[db_path] = conn
-        return conn
+            conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10)
+            conn.execute("PRAGMA journal_mode = WAL")
+            try:
+                import sqlite_zstd
+                conn.enable_load_extension(True)
+                sqlite_zstd.load(conn)
+            except Exception as e:
+                logger.debug(f"Could not load sqlite-zstd for {db_path}: {e}")
+            self._conn_cache[db_path] = conn
+            return conn
+        except Exception as e:
+            logger.error(f"Failed to connect to {db_path}: {e}")
+            raise
 
     def close_all(self):
         """Close all cached connections."""

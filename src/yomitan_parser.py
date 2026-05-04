@@ -21,6 +21,22 @@ def _flatten_content(data, indent=0) -> str:
     if isinstance(data, dict):
         tag = data.get("tag")
 
+        # Handle Yomitan structured-content wrapper
+        if data.get("type") == "structured-content":
+            content = data.get("content", [])
+            if isinstance(content, list):
+                parts = []
+                for c in content:
+                    result = _flatten_content(c)
+                    if result:
+                        parts.append(result)
+                return " | ".join(parts)  # Use | to separate different sections
+            return _flatten_content(content)
+
+        # Handle forms (spelling/reading variants table)
+        if data.get("data", {}).get("content") == "forms":
+            return _extract_forms(data.get("content", []))
+
         # Skip example sentences - they're too verbose
         if data.get("data", {}).get("content") == "example-sentence":
             return ""
@@ -60,6 +76,78 @@ def _flatten_content(data, indent=0) -> str:
         return " ".join([_flatten_content(v) for v in data.values() if isinstance(v, (str, list, dict))])
 
     return ""
+
+
+def _extract_forms(content) -> str:
+    """Extract forms (spelling/reading variants) from table structure."""
+    if not isinstance(content, list):
+        return ""
+
+    # Find the table
+    table = None
+    for item in content:
+        if isinstance(item, dict) and item.get("tag") == "table":
+            table = item.get("content", [])
+            break
+
+    if not table:
+        return ""
+
+    # Extract headers (kanji variants) from first row
+    headers = []
+    for row in table:
+        if isinstance(row, dict) and row.get("data", {}).get("content") == "forms-header-row":
+            for cell in row.get("content", []):
+                if isinstance(cell, dict) and cell.get("tag") == "th":
+                    text = _flatten_content(cell.get("content"))
+                    if text:
+                        headers.append(text)
+            break
+
+    if not headers:
+        return ""
+
+    # Extract data rows (readings + form types)
+    form_rows = []
+    for row in table:
+        if isinstance(row, dict) and row.get("tag") == "tr" and row.get("data", {}).get("content") != "forms-header-row":
+            cells = row.get("content", [])
+            if not cells:
+                continue
+
+            # First cell is reading
+            reading = _flatten_content(cells[0]) if cells else ""
+            if not reading:
+                continue
+
+            # Rest are form types
+            form_types = []
+            for cell in cells[1:]:
+                if isinstance(cell, dict):
+                    cls = cell.get("data", {}).get("class", "")
+                    if cls == "form-pri":
+                        form_types.append("pri")
+                    elif cls == "form-rare":
+                        form_types.append("rare")
+                    elif cls == "form-out":
+                        form_types.append("obs")
+                    else:
+                        form_types.append(cls)
+
+            # Match form types to headers
+            forms = []
+            for i, ft in enumerate(form_types):
+                if i < len(headers):
+                    if ft:  # Only include if there's a form type
+                        marker = {"pri": "*", "rare": "?", "obs": "~"}.get(ft, "")
+                        forms.append(f"{headers[i]}{marker}")
+                    else:
+                        forms.append(headers[i])  # Just the kanji if no marker
+
+            if forms:
+                form_rows.append(f"{reading}: {' '.join(forms)}")
+
+    return " | ".join(form_rows) if form_rows else ""
 
 def parse_yomitan_zip(zip_path: str) -> Generator[Dict[str, Any], None, None]:
     """Parse Yomitan ZIP file and yield dictionary entries.

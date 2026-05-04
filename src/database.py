@@ -198,18 +198,19 @@ class DatabaseManager:
         return [word]
 
     def lookup_jmdict(self, word):
-        """Look up word in JMDict via jamdict."""
+        """Look up word in JMDict via jamdict and return formatted string."""
         try:
             result = self.jam.lookup(word)
             if not result.entries:
                 return None
 
-            entries = []
+            output = []
             for entry in result.entries:
-                text = entry.text()
-                entries.append(text)
+                # entry.text() is what currently returns the raw blob
+                # Format: "headword [reading] / glossary"
+                output.append(f"**{entry.headword}** [{entry.reading}]<br>{entry.glossary}")
 
-            return "\n\n".join(entries)
+            return "<br><br>".join(output)
         except Exception as e:
             print(f"JMDict lookup error: {e}")
             return None

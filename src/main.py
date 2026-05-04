@@ -274,11 +274,11 @@ class YomikataApp(QMainWindow):
         return super().eventFilter(obj, event)
 
     def format_definition(self, text):
-        """Adds line breaks before special symbols ●, ◆, ■, and numbering like 1."""
+        """Adds line breaks before special symbols ●, ◆, ■, ①, ②, etc., and numbering like 1."""
         if not text:
             return ""
-        # Break before symbols
-        text = re.sub(r"([●◆■])", r"<br>\1", text)
+        # Break before symbols and numbering patterns
+        text = re.sub(r"([●◆■①②③④⑤⑥⑦⑧⑨⑩])", r"<br>\1", text)
         # Break before bracketed numbers (e.g., 【1】 or (1))
         text = re.sub(r"([（\(【]\d+[】\)\)])", r"<br>\1", text)
         return text

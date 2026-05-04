@@ -1,7 +1,7 @@
 import ollama
+from PyQt6.QtCore import QThread, pyqtSignal
+from config import ConfigManager
 from openai import OpenAI
-from PyQt6.QtCore import QSettings, QThread, pyqtSignal
-
 
 class AIWorker(QThread):
     finished = pyqtSignal(str)
@@ -10,11 +10,11 @@ class AIWorker(QThread):
     def __init__(self, prompt):
         super().__init__()
         self.prompt = prompt
-        self.settings = QSettings("Yomikata", "Settings")
+        self.config = ConfigManager()
 
     def run(self):
-        provider = self.settings.value("ai_provider", "Ollama")
-        model = self.settings.value("ai_model", "llama3")
+        provider = self.config.ai_provider
+        model = self.config.ai_model
 
         try:
             if provider == "Ollama":
@@ -25,10 +25,8 @@ class AIWorker(QThread):
             else:
                 # Using the OpenAI Library for Remote Providers
                 # DeepInfra, OpenAI, etc.
-                base_url = self.settings.value(
-                    "api_url", "https://api.openai.com/v1"
-                ).strip()
-                api_key = self.settings.value("api_key", "").strip()
+                base_url = self.config.get("api_url", "https://api.openai.com/v1").strip()
+                api_key = self.config.get("api_key", "").strip()
 
                 # Initialize the client
                 client = OpenAI(

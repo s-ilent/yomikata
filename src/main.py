@@ -4,19 +4,20 @@ import sys
 
 import markdown
 import qtawesome as qta
-from PyQt6.QtCore import QDateTime, QSettings, Qt
+from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
-    QProgressBar,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QSplitter,
     QTextEdit,
@@ -24,20 +25,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ai_worker import AIWorker
-from database import (
-    DatabaseManager,
-    get_personal_note,
-    get_history,
-    lookup_word,
-    save_history,
-    save_to_personal_dict,
-    search_definitions,
-)
+from config import ConfigManager
+from database import DatabaseManager
 from flow_layout import FlowLayout
 from processor import TextProcessor
 from style import build_stylesheet, get_font_size, CATPPUCCIN_MOCHA as CAT
-from widgets import PunctuationWidget, SettingsDialog, TokenWidget
+from dialogs.settings_dialog import SettingsDialog
+from dialogs.history_dialog import HistoryDialog
+from widgets import PunctuationWidget, TokenWidget
+from services.dictionary_service import DictionaryService
+from services.history_service import HistoryService
+from services.ai_service import AIService
 
 # AI Prompt Templates
 AI_TEMPLATES = {
@@ -98,12 +96,15 @@ class YomikataApp(QMainWindow):
         super().__init__()
         self.selection_list = []  # List of selected token dicts
         self.debug_logs = []  # Store logs for the settings menu
-        self.db = DatabaseManager()
+        self.db_manager = DatabaseManager()
+        self.dict_service = DictionaryService(self.db_manager)
+        self.history_service = HistoryService(self.db_manager)
+        self.ai_service = AIService()
         self.processor = TextProcessor()
         
         # Load font size preference
-        self.settings = QSettings("Yomikata", "Settings")
-        self.font_size = int(self.settings.value("font_size", 14))
+        self.config = ConfigManager()
+        self.font_size = self.config.font_size
         
         self.init_ui()
 
@@ -294,8 +295,8 @@ class YomikataApp(QMainWindow):
 
         # Save to history before processing
         if text:
-            max_entries = int(self.settings.value("history_size", 50))
-            save_history(text, max_entries)
+            max_entries = self.config.history_size
+            self.history_service.save_history(text, max_entries)
 
         tokens = self.processor.tokenize(text)
         punct_chars = "、。「」！？（）()., "
@@ -311,126 +312,36 @@ class YomikataApp(QMainWindow):
                 self.matrix_layout.addWidget(card)
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
-        if dialog.exec():
-            # You could add logic here to refresh the AIWorker
-            # or update the UI based on new settings
-            print("Settings saved!")
+        font_size = self.config.font_size
+        history_size = self.config.history_size
+        dialog = SettingsDialog(self, font_size, history_size, self.debug_logs)
+        dialog.settings_saved.connect(self.apply_settings)
+        dialog.exec()
+
+    def apply_settings(self, font_size, history_size):
+        # Apply the new settings
+        self.update_font_size(font_size)
+        self.log_debug(f"Settings applied: font_size={font_size}, history_size={history_size}")
+
 
     def show_history(self):
         """Show history dialog with previously analyzed texts."""
-        from PyQt6.QtWidgets import (
-            QDialog, QVBoxLayout, QPushButton, QHBoxLayout,
-            QScrollArea, QFrame, QLabel, QSizePolicy
-        )
-        from PyQt6.QtCore import Qt
+        max_entries = self.config.history_size
+        entries = self.history_service.get_history(limit=max_entries)
 
-        # Get max history entries from settings (default 50)
-        max_entries = int(self.settings.value("history_size", 50))
-        entries = get_history(limit=max_entries)
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Text History")
-        dialog.resize(700, 500)
-
-        # Apply catppuccin styling
-        dialog.setStyleSheet(f"""
-            QDialog {{
-                background-color: {CAT["background"]};
-                color: {CAT["foreground"]};
-            }}
-            QScrollArea {{
-                background-color: transparent;
-                border: none;
-            }}
-            QPushButton {{
-                background-color: {CAT["surface"]};
-                color: {CAT["foreground"]};
-                border: 1px solid {CAT["surface_hover"]};
-                border-radius: 4px;
-                padding: 8px 16px;
-            }}
-            QPushButton:hover {{
-                background-color: {CAT["surface_hover"]};
-            }}
-        """)
-
-        layout = QVBoxLayout(dialog)
-
-        # Scroll area with history cards
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("border: none;")
-
-        # Container for history cards
-        cards_container = QWidget()
-        cards_layout = QVBoxLayout(cards_container)
-        cards_layout.setSpacing(10)
-        cards_layout.addStretch()
-
-        # Create a card for each history entry
-        entry_map = {}  # Map card widget to original text
-
-        for text, timestamp in entries:
-            # Create card frame
-            card = QFrame()
-            card.setFrameShape(QFrame.Shape.StyledPanel)
-            card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {CAT["surface"]};
-                    border: 1px solid {CAT["surface_hover"]};
-                    border-radius: 6px;
-                    padding: 10px;
-                }}
-                QFrame:hover {{
-                    border: 1px solid {CAT["selection"]};
-                }}
-            """)
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
-
-            card_layout = QVBoxLayout(card)
-
-            # Timestamp label (smaller, muted)
-            ts_label = QLabel(str(timestamp))
-            ts_label.setStyleSheet(f"color: {CAT['comment']}; font-size: 11px;")
-            card_layout.addWidget(ts_label)
-
-            # Text content (with word wrap)
-            text_label = QLabel(text)
-            text_label.setStyleSheet(f"color: {CAT['foreground']}; font-size: {self.font_size}px;")
-            text_label.setWordWrap(True)
-            text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            card_layout.addWidget(text_label)
-
-            cards_layout.insertWidget(cards_layout.count() - 1, card)
-            entry_map[card] = text
-
-            # Click handler
-            card.mousePressEvent = lambda event, t=text, w=card: self._on_history_card_click(t, w, dialog)
-
-        scroll.setWidget(cards_container)
-        layout.addWidget(scroll, stretch=1)
-
-        # Close button
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
-
+        dialog = HistoryDialog(self, entries, self.font_size)
+        dialog.text_selected.connect(self.restore_history_text)
         dialog.exec()
 
-    def _on_history_card_click(self, text, card_widget, dialog):
-        """Handle history card click - restore text and analyze."""
+    def restore_history_text(self, text):
+        """Restore text from history and analyze."""
         self.input_area.setPlainText(text)
-        self.analyze_text()  # Automatically analyze
-        dialog.close()
+        self.analyze_text()
 
     def update_font_size(self, size: int):
         """Update font size and regenerate stylesheet."""
         self.font_size = size
-        self.settings.setValue("font_size", size)
+        self.config.font_size = size
         self.setStyleSheet(build_stylesheet(font_base=size))
         # Update token display sizes
         self._update_token_font_sizes()
@@ -454,7 +365,7 @@ class YomikataApp(QMainWindow):
             # Join all selected surfaces (e.g. "わかっ" + "た" = "ようになった")
             combined_surface = "".join([t["surface"] for t in self.selection_list])
 
-            save_to_personal_dict(combined_surface, self.last_ai_response)
+            self.dict_service.save_personal_note(combined_surface, self.last_ai_response)
 
             self.dict_display.append(
                 f"<br><i style='color:{CAT["green"]};'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
@@ -469,7 +380,7 @@ class YomikataApp(QMainWindow):
         combined_surface = "".join([t["surface"] for t in self.selection_list])
 
         # Get existing note if any
-        existing = get_personal_note(combined_surface)
+        existing = self.dict_service.get_personal_note(combined_surface)
 
         text, ok = QInputDialog.getMultiLineText(
             self,
@@ -478,7 +389,7 @@ class YomikataApp(QMainWindow):
             existing or "",
         )
         if ok and text:
-            save_to_personal_dict(combined_surface, text)
+            self.dict_service.save_personal_note(combined_surface, text)
             self.dict_display.append(
                 f"<br><i style='color:{CAT["green"]};'>✓ Note saved for '{combined_surface}'</i>"
             )
@@ -534,8 +445,8 @@ class YomikataApp(QMainWindow):
 ---
 """
         # Fetch dictionary content
-        extra_dicts = QSettings("Yomikata", "Settings").value("extra_dictionaries", [])
-        raw_defs = lookup_word(combined_surface, lemma_list, extra_dicts)
+        extra_dicts = self.config.extra_dictionaries
+        raw_defs = self.dict_service.lookup(combined_surface, lemma_list, extra_dicts)
         markdown_text += self.format_definition(raw_defs)
 
         # Render
@@ -579,18 +490,19 @@ class YomikataApp(QMainWindow):
         )
 
         # Fill in template placeholders
-        prompt = template.format(
-            text=combined_text, context=context, components=components, pos=pos_list
-        )
+        prompt_data = {
+            "text": combined_text,
+            "context": context,
+            "components": components,
+            "pos": pos_list
+        }
+        prompt = self.ai_service.build_prompt(template, prompt_data)
 
         self.log_debug(f"AI Prompt Sent (mode: {selected_template}): {prompt[:200]}...")
         self.progress_bar.setVisible(True)
         self.ai_btn.setEnabled(False)
 
-        self.worker = AIWorker(prompt)
-        self.worker.finished.connect(self.on_ai_response)
-        self.worker.error.connect(self.on_ai_error)
-        self.worker.start()
+        self.ai_service.run_analysis(prompt, self.on_ai_response, self.on_ai_error)
 
     def on_ai_response(self, response):
         self.log_debug(f"AI Response Received:\n{response}")
@@ -626,8 +538,8 @@ class YomikataApp(QMainWindow):
         if not query:
             return
 
-        extra_dicts = QSettings("Yomikata", "Settings").value("extra_dictionaries", [])
-        results = search_definitions(query, extra_dicts)
+        extra_dicts = self.config.extra_dictionaries
+        results = self.dict_service.search_definitions(query, extra_dicts)
 
         markdown_text = f"# Search: {query}\n\n"
         if results:

@@ -1,4 +1,6 @@
 import os
+import re
+import ast
 import sqlite3
 
 import fugashi
@@ -146,44 +148,42 @@ class DatabaseManager:
         """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
         import re
         from PyQt6.QtCore import QDateTime
-        # Normalize: collapse all whitespace to single space, strip
-        normalized = re.sub(r'\s+', ' ', text).strip()
-        if not normalized:
+        
+        if not text.strip():
             return
-
+            
+        normalized = re.sub(r'\s+', ' ', text.strip())
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
-
-        # Check if this normalized text already exists
-        existing = cursor.execute(
-            "SELECT id FROM history WHERE normalized_text = ?",
+        
+        # Check if already exists in history
+        exists = cursor.execute(
+            "SELECT id FROM history WHERE normalized_text = ?", 
             (normalized,)
         ).fetchone()
-
-        if existing:
-            # Update timestamp to move to top
+        
+        if exists:
+            # Update timestamp
             cursor.execute(
                 "UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?",
-                (existing[0],)
+                (exists[0],)
             )
         else:
-            # Insert new entry
+            # Insert new
             cursor.execute(
                 "INSERT INTO history (text, normalized_text) VALUES (?, ?)",
                 (text, normalized)
             )
-
-            # Keep only last max_entries entries
-            cursor.execute("""
-                DELETE FROM history WHERE id NOT IN (
-                    SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
-                )
-            """, (max_entries,))
-
+            
+        # Enforce limit
+        cursor.execute("""
+            DELETE FROM history WHERE id NOT IN (
+                SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
+            )
+        """, (max_entries,))
         conn.commit()
 
     def get_history(self, limit: int = 50):
-        """Get recent history entries ordered by timestamp descending."""
         conn = self.get_conn(self.main_db)
         res = conn.execute(
             "SELECT text, timestamp FROM history ORDER BY timestamp DESC LIMIT ?",
@@ -191,37 +191,11 @@ class DatabaseManager:
         ).fetchall()
         return res
 
-    def get_lemma(self, word):
-        """Get the base lemma form of a word using Fugashi."""
-        tagger = fugashi.Tagger()
-        tokens = tagger(word)
-        if tokens:
-            first = tokens[0]
-            if first.feature and first.feature.lemma:
-                return first.feature.lemma
-        return None
-
     def get_inflected_forms(self, word):
-        """Get various inflected forms of a word using Fugashi.
-
-        Returns a list of inflected forms that might exist in the dictionary,
-        making lookup more comprehensive. This includes past tense, te-form,
-        and other common inflections.
-        """
-        forms = []
-        try:
-            tagger = fugashi.Tagger()
-            tokens = tagger(word)
-            if tokens:
-                first = tokens[0]
-                # Use conjugations attribute if available
-                if hasattr(first, 'conjugations') and first.conjugations:
-                    for conj in first.conjugations:
-                        if conj.form:
-                            forms.append(conj.form)
-        except Exception:
-            pass
-        return forms
+        """Use fugashi/MeCab to guess potential lemma/inflected forms."""
+        # Simple implementation for now - just returns a list with the word itself
+        # In a real app, this would use fugashi to get dictionary forms
+        return [word]
 
     def lookup_jmdict(self, word):
         """Look up word in JMDict via jamdict."""
@@ -256,98 +230,86 @@ class DatabaseManager:
         # 3. Search all registered DBs with multiple forms
         search_paths = [self.main_db] + (extra_paths or [])
 
-        # Collect all forms to search: exact word first, then inflected, lemma last
-        forms_to_try = [word]  # Exact word highest priority
-
-        # Add inflected forms after exact word (but before lemma)
+        # Collect all forms to search
+        forms_to_try = [word]
         inflected_forms = self.get_inflected_forms(word)
         for form in inflected_forms:
             if form and form != word and form != lemma and form not in forms_to_try:
                 forms_to_try.append(form)
 
-        # Add lemma LAST - lowest priority (least specific match)
         if lemma and lemma != word and lemma not in forms_to_try:
             forms_to_try.append(lemma)
 
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
-            try:
-                conn = self.get_conn(path)
+            
+            db_name = os.path.basename(path)
+            conn = self.get_conn(path)
+            
+            # Try to search 'dictionary_entries' (rich) table
+            has_rich = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'"
+            ).fetchone()
+            
+            found_in_this_db = False
+            if has_rich:
+                for form in forms_to_try:
+                    res = conn.execute(
+                        "SELECT reading, glossary FROM dictionary_entries WHERE headword = ? OR reading = ?",
+                        (form, form)
+                    ).fetchall()
+                    if res:
+                        for r, g in res:
+                            results.append(f"### 📖 {db_name} ({form} [{r}])\n{g}")
+                        found_in_this_db = True
+                        break # Only take the best match form
 
-                # Search legacy dictionary table (if it exists)
-                try:
-                    for w in forms_to_try:
+            # Try to search 'dictionary' (legacy) table if not found or no rich table
+            if not found_in_this_db:
+                has_legacy = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'"
+                ).fetchone()
+                if has_legacy:
+                    for form in forms_to_try:
                         res = conn.execute(
                             "SELECT definition FROM dictionary WHERE headword = ?",
-                            (w,)
-                        ).fetchone()
+                            (form,)
+                        ).fetchall()
                         if res:
-                            name = os.path.basename(path).replace(".db", "").upper()
-                            results.append(f"### 📖 {name}\n{res[0]}")
-                except Exception:
-                    pass  # Table might not exist
-
-                # Search new dictionary_entries table (Yomitan/JMDict)
-                try:
-                    for w in forms_to_try:
-                        # Search by headword OR by reading (for Yomitan dictionaries)
-                        res = conn.execute(
-                            "SELECT glossary, reading, pos, dictionary_name, headword FROM dictionary_entries WHERE headword = ? OR reading = ?",
-                            (w, w)
-                        ).fetchone()
-                        if res:
-                            db_name = res[3] or os.path.basename(path).replace(".db", "").upper()
-                            glossary = res[0]
-                            reading = res[1] or ""
-                            pos = res[2] or ""
-                            headword = res[4]
-                            # Format nicely
-                            entry = f"**{headword}**"
-                            if reading and reading != headword:
-                                entry += f" [{reading}]"
-                            if pos:
-                                entry += f" <{pos}>"
-                            entry += f"\n\n{glossary}"
-                            results.append(f"### 📖 {db_name}\n{entry}")
-                except Exception as e:
-                    print(f"dictionary_entries error: {e}", file=__import__('sys').stderr)
-            except Exception as e:
-                print(f"Lookup error for {path}: {e}", file=__import__('sys').stderr)
-                continue
+                            for definition, in res:
+                                results.append(f"### 📖 {db_name} ({form})\n{definition}")
+                            break
 
         return "\n\n---\n\n".join(results)
 
     def search_definitions(self, query, extra_paths=None):
-        """Search for query inside definitions using FTS5 with ranking, sanitization, and LIKE fallback."""
+        """Search for query inside definitions using FTS5."""
         results = []
-        search_paths = [self.main_db] + (extra_paths or [])
         
-        # Determine if we should use LIKE fallback for short queries (especially Japanese/Unicode)
-        # Trigram needs 3+ characters to be effective.
-        use_like_fallback = len(query) < 3 or any(ord(c) > 127 for c in query)
-
-        # Sanitize query: split into words and wrap each in quotes to prevent syntax errors
-        # but allow multiple words to be ANDed.
-        parts = query.split()
-        if not parts:
+        # Sanitize query for FTS5
+        sanitized_query = query.replace('"', '""')
+        if not sanitized_query:
             return ""
-        sanitized_query = " AND ".join(['"' + p.replace('"', '""') + '"' for p in parts])
 
+        # Use LIKE fallback for short queries or if FTS fails
+        use_like_fallback = len(query) < 3
+
+        search_paths = [self.main_db] + (extra_paths or [])
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
+            
+            db_name = os.path.basename(path)
+            conn = self.get_conn(path)
+            
             try:
-                conn = self.get_conn(path)
-                db_name = os.path.basename(path).replace(".db", "").upper()
-
-                # 1. Search Personal Notes if this is the main DB
+                # 1. Search Personal Notes FTS if it exists
                 if path == self.main_db:
-                    table_exists = conn.execute(
+                    has_personal_fts = conn.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict_fts'"
                     ).fetchone()
-                    if table_exists:
-                        # Try FTS first
+                    if has_personal_fts:
                         res = conn.execute(
                             """SELECT p.headword, p.definition 
                                FROM personal_dict_fts f 
@@ -356,7 +318,6 @@ class DatabaseManager:
                             (sanitized_query,)
                         ).fetchall()
                         
-                        # Fallback to LIKE if no results and query is short/unicode
                         if not res and use_like_fallback:
                             res = conn.execute(
                                 "SELECT headword, definition FROM personal_dict WHERE definition LIKE ? LIMIT 5",
@@ -370,31 +331,43 @@ class DatabaseManager:
                 table_exists = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_fts'"
                 ).fetchone()
-                if not table_exists:
-                    continue
-
-                # FTS5 search with BM25 ranking. 
-                # We join with 'dictionary' because FTS only indexes the definition column now.
-                res = conn.execute(
-                    """SELECT d.headword, d.definition 
-                       FROM dictionary_fts f
-                       JOIN dictionary d ON d.id = f.rowid
-                       WHERE f.definition MATCH ? ORDER BY rank LIMIT 10""",
-                    (sanitized_query,)
-                ).fetchall()
-                
-                # Fallback to LIKE if no results and query is short/unicode
-                if not res and use_like_fallback:
+                if table_exists:
                     res = conn.execute(
-                        "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
-                        (f"%{query}%",)
+                        """SELECT d.headword, d.definition 
+                           FROM dictionary_fts f
+                           JOIN dictionary d ON d.id = f.rowid
+                           WHERE f.definition MATCH ? ORDER BY rank LIMIT 10""",
+                        (sanitized_query,)
                     ).fetchall()
+                    
+                    if not res and use_like_fallback:
+                        res = conn.execute(
+                            "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
+                            (f"%{query}%",)
+                        ).fetchall()
+                    
+                    if res:
+                        for headword, definition in res:
+                            results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
                 
-                if res:
-                    for headword, definition in res:
-                        results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
+                # 3. Search rich dictionary entries FTS
+                rich_fts_exists = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries_fts'"
+                ).fetchone()
+                if rich_fts_exists:
+                    res = conn.execute(
+                        """SELECT d.headword, d.reading, d.glossary 
+                           FROM dictionary_entries_fts f
+                           JOIN dictionary_entries d ON d.rowid = f.rowid
+                           WHERE f.glossary MATCH ? OR f.headword MATCH ? ORDER BY rank LIMIT 10""",
+                        (sanitized_query, sanitized_query)
+                    ).fetchall()
+                    if res:
+                        for h, r, g in res:
+                            results.append(f"### 📖 {db_name} (search: {h} [{r}])\n{g}")
+
             except Exception as e:
-                # Fallback to LIKE on any error (like FTS syntax error)
+                # Fallback to LIKE
                 try:
                     res = conn.execute(
                         "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
@@ -408,10 +381,250 @@ class DatabaseManager:
 
         return "\n\n---\n\n".join(results)
 
+# Standalone helper functions
+def create_fts_index(db_path):
+    """Create or rebuild FTS5 index for an existing dictionary using external content."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    total_count = 0
+
+    # Handle dictionary_entries table (Yomitan/JMDict)
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'").fetchone():
+        table_name = "dictionary_entries"
+        fts_table = "dictionary_entries_fts"
+        rowid_col = "rowid"
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                headword, reading, glossary,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    # Handle legacy dictionary table (Eijiro)
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'").fetchone():
+        table_name = "dictionary"
+        fts_table = "dictionary_fts"
+        rowid_col = "id"
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                definition,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    # Handle personal_dict
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
+        table_name = "personal_dict"
+        fts_table = "personal_dict_fts"
+        rowid_col = "rowid"
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                definition,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    if total_count == 0:
+        conn.close()
+        return 0
+
+    # Vacuum to recover space
+    cursor.execute("VACUUM")
+    conn.close()
+
+    return total_count
+
+
+def import_dictionary_file(source_path, target_db_path, progress_callback=None, debug_callback=None):
+    """Import entries from an Eijiro-style text file into a SQLite database."""
+    def log(msg):
+        if debug_callback:
+            debug_callback(msg)
+
+    conn = sqlite3.connect(target_db_path)
+    cursor = conn.cursor()
+
+    try:
+        import sqlite_zstd
+        conn.enable_load_extension(True)
+        sqlite_zstd.load(conn)
+    except Exception:
+        pass
+
+    cursor.execute("PRAGMA page_size = 4096")
+    cursor.execute("PRAGMA journal_mode = WAL")
+    cursor.execute("PRAGMA auto_vacuum = FULL")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dictionary (
+            id INTEGER PRIMARY KEY,
+            headword TEXT,
+            definition TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+
+    # Detect encoding
+    try:
+        f = open(source_path, "r", encoding="utf-8")
+        f.readline()
+        f.seek(0)
+    except UnicodeDecodeError:
+        f = open(source_path, "r", encoding="cp932")
+
+    entries = []
+    total = 0
+    with f:
+        for line in f:
+            if line.startswith("■"):
+                parts = line.lstrip("■").split(" : ", 1)
+                if len(parts) == 2:
+                    entries.append((parts[0].strip(), parts[1].strip()))
+
+            if len(entries) >= 20000:
+                cursor.executemany("INSERT INTO dictionary (headword, definition) VALUES (?, ?)", entries)
+                conn.commit()
+                total += len(entries)
+                entries = []
+                if progress_callback:
+                    progress_callback(total)
+
+    if entries:
+        cursor.executemany("INSERT INTO dictionary (headword, definition) VALUES (?, ?)", entries)
+        total += len(entries)
+
+    conn.commit()
+    create_fts_index(target_db_path)
+    conn.close()
+
+    if progress_callback:
+        progress_callback(total)
+
+    return total
+
+
+def export_personal_dict(output_path, format="json"):
+    """Export personal_dict table to JSON or CSV."""
+    conn = sqlite3.connect("yomikata.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT headword, definition FROM personal_dict")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if format == "json":
+        import json
+        data = [{"headword": row[0], "definition": row[1]} for row in rows]
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    else:  # csv
+        import csv
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["headword", "definition"])
+            writer.writerows(rows)
+    return len(rows)
+
+
+def import_personal_dict(input_path, format=None):
+    """Import personal_dict from a JSON or CSV file."""
+    if format is None:
+        format = os.path.splitext(input_path)[1].lower().lstrip(".")
+
+    conn = sqlite3.connect("yomikata.db")
+    cursor = conn.cursor()
+
+    if format == "json":
+        import json
+        with open(input_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entries = [(item["headword"], item["definition"]) for item in data]
+    else:  # csv
+        import csv
+        with open(input_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            entries = [(row["headword"], row["definition"]) for row in reader]
+
+    cursor.executemany("INSERT OR REPLACE INTO personal_dict VALUES (?, ?)", entries)
+    conn.commit()
+    conn.close()
+    return len(entries)
+
+def import_yomitan_zip(zip_path: str, db_path: str, progress_callback=None) -> int:
+    """Import Yomitan ZIP into the database."""
+    from yomitan_parser import parse_yomitan_zip
+    entries = list(parse_yomitan_zip(zip_path))
+    total = len(entries)
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dictionary_entries (
+            id INTEGER PRIMARY KEY,
+            headword TEXT NOT NULL,
+            reading TEXT,
+            pos TEXT,
+            pitch_accent TEXT,
+            glossary TEXT NOT NULL,
+            priority INTEGER DEFAULT 0,
+            dictionary_name TEXT,
+            UNIQUE(headword, reading, dictionary_name)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword_rich ON dictionary_entries(headword)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
+    conn.commit()
+
+    batch_size = 1000
+    for i in range(0, total, batch_size):
+        batch = entries[i:i+batch_size]
+        for entry in batch:
+            cursor.execute("""
+                INSERT OR IGNORE INTO dictionary_entries 
+                (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                entry['headword'],
+                entry['reading'],
+                entry['pos'],
+                entry['pitch_accent'],
+                entry['glossary'],
+                entry['priority'],
+                entry['dictionary_name']
+            ))
+        conn.commit()
+        if progress_callback:
+            progress_callback(min(i + batch_size, total), total)
+    
+    conn.close()
+    create_fts_index(db_path)
+    return total
 
 # Global instance for backward compatibility
 _db = None
-
 
 def _get_db():
     global _db
@@ -419,36 +632,29 @@ def _get_db():
         _db = DatabaseManager()
     return _db
 
-
 def init_db():
     """Initialize the database (creates tables if needed)."""
     _get_db().init_main_db()
-
 
 def lookup_word(word, lemma, extra_dicts=None):
     """Backward-compatible lookup function."""
     return _get_db().lookup(word, lemma, extra_dicts)
 
-
 def save_to_personal_dict(word, definition):
     """Backward-compatible save function."""
     _get_db().save_personal_note(word, definition)
-
 
 def get_personal_note(word):
     """Get a personal note for a word."""
     return _get_db().get_personal_note(word)
 
-
 def save_history(text: str, max_entries: int = 50):
     """Backward-compatible save history function."""
     _get_db().save_history(text, max_entries)
 
-
 def get_history(limit: int = 50):
     """Backward-compatible get history function."""
     return _get_db().get_history(limit)
-
 
 def search_definitions(query, extra_dicts=None):
     """Search for query inside definitions using FTS5."""

@@ -1,0 +1,33 @@
+# Ruff Configuration
+# https://beta.ruff.rs/docs/configuration/
+
+# Target Python version
+target-version = "py313"
+
+# Include all source and tests
+extend-include = ["*.py"]
+
+# Set line length to avoid overly complex lines, consistent with readability focus
+line-length = 88
+
+[lint]
+# Enable standard rule sets based on STYLE.md preferences
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = []
+
+# Allow unused variables when they are prefixed with `_`
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[format]
+# Enable auto-formatting to match STYLE.md
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"

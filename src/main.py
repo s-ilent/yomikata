@@ -1,3 +1,4 @@
+import argparse
 import os
 import re
 import sys
@@ -5,8 +6,7 @@ import sys
 import markdown
 import qtawesome as qta
 from PyQt6.QtCore import QDateTime, Qt
-from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtGui import QFontDatabase, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
-    QPushButton,
     QProgressBar,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QTextEdit,
@@ -27,15 +27,16 @@ from PyQt6.QtWidgets import (
 
 from config import ConfigManager
 from database import DatabaseManager
+from dialogs.history_dialog import HistoryDialog
+from dialogs.settings_dialog import SettingsDialog
 from flow_layout import FlowLayout
 from processor import TextProcessor
-from style import build_stylesheet, get_font_size, CATPPUCCIN_MOCHA as CAT
-from dialogs.settings_dialog import SettingsDialog
-from dialogs.history_dialog import HistoryDialog
-from widgets import PunctuationWidget, TokenWidget
+from services.ai_service import AIService
 from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
-from services.ai_service import AIService
+from style import CATPPUCCIN_MOCHA as CAT
+from style import build_stylesheet, get_font_size
+from widgets import PunctuationWidget, TokenWidget
 
 # AI Prompt Templates
 AI_TEMPLATES = {
@@ -101,11 +102,11 @@ class YomikataApp(QMainWindow):
         self.history_service = HistoryService(self.db_manager)
         self.ai_service = AIService()
         self.processor = TextProcessor()
-        
+
         # Load font size preference
         self.config = ConfigManager()
         self.font_size = self.config.font_size
-        
+
         self.init_ui()
 
     def init_ui(self):
@@ -277,10 +278,31 @@ class YomikataApp(QMainWindow):
         """Adds line breaks before special symbols ●, ◆, ■, ①, ②, etc., and numbering like 1."""
         if not text:
             return ""
-        # Break before symbols and numbering patterns
-        text = re.sub(r"([●◆■①②③④⑤⑥⑦⑧⑨⑩])", r"<br>\1", text)
+        # Convert single newlines to double to preserve line breaks in markdown
+        text = re.sub(r"(?<!\n)\n(?!\n)", r"\n\n", text)
+        # Also handle double-width spaces
+        text = text.replace("　", " ")
+
+        # Format patterns in the DEFINITIONS section (after ---)
+        parts = text.split("---")
+        if len(parts) > 1:
+            header = parts[0] + "---"
+            definitions = "---".join(parts[1:])
+        else:
+            header = ""
+            definitions = text
+
+        # Apply formatting only to definitions part (after ---)
+        # Break before our custom sense markers ◆X anywhere they appear
+        definitions = re.sub(r"(◆[①②③④⑤⑥⑦⑧⑨⑩])", r"\n\n\1", definitions)
         # Break before bracketed numbers (e.g., 【1】 or (1))
-        text = re.sub(r"([（\(【]\d+[】\)\)])", r"<br>\1", text)
+        definitions = re.sub(r"([（\(【]\d+[】\)\)])", r"\n\n\1", definitions)
+        # Break before numbered Japanese patterns like "1 〔...〕"
+        definitions = re.sub(r"(\d+\s+〔)", r"\n\n\1", definitions)
+        # Break before patterns like "1)" after Japanese characters
+        definitions = re.sub(r"([一-龥あ-んァ-ン])(\))", r"\1\n\n\2", definitions)
+
+        text = header + definitions if header else definitions
         return text
 
     def analyze_text(self):
@@ -321,8 +343,9 @@ class YomikataApp(QMainWindow):
     def apply_settings(self, font_size, history_size):
         # Apply the new settings
         self.update_font_size(font_size)
-        self.log_debug(f"Settings applied: font_size={font_size}, history_size={history_size}")
-
+        self.log_debug(
+            f"Settings applied: font_size={font_size}, history_size={history_size}"
+        )
 
     def show_history(self):
         """Show history dialog with previously analyzed texts."""
@@ -355,9 +378,15 @@ class YomikataApp(QMainWindow):
         for i in range(self.matrix_layout.count()):
             widget = self.matrix_layout.itemAt(i).widget()
             if widget and isinstance(widget, TokenWidget):
-                widget.romaji_lbl.setStyleSheet(f"font-size: {romaji_size}px; color: #6272a4;")
-                widget.kana_lbl.setStyleSheet(f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;")
-                widget.surface_lbl.setStyleSheet(f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;")
+                widget.romaji_lbl.setStyleSheet(
+                    f"font-size: {romaji_size}px; color: #6272a4;"
+                )
+                widget.kana_lbl.setStyleSheet(
+                    f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;"
+                )
+                widget.surface_lbl.setStyleSheet(
+                    f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;"
+                )
 
     def save_ai_to_dict(self):
         """Modified to save the COMBINED phrase, not just one word."""
@@ -365,10 +394,12 @@ class YomikataApp(QMainWindow):
             # Join all selected surfaces (e.g. "わかっ" + "た" = "ようになった")
             combined_surface = "".join([t["surface"] for t in self.selection_list])
 
-            self.dict_service.save_personal_note(combined_surface, self.last_ai_response)
+            self.dict_service.save_personal_note(
+                combined_surface, self.last_ai_response
+            )
 
             self.dict_display.append(
-                f"<br><i style='color:{CAT["green"]};'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
+                f"<br><i style='color:{CAT['green']};'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
             )
             self.save_ai_btn.setVisible(False)
 
@@ -391,7 +422,7 @@ class YomikataApp(QMainWindow):
         if ok and text:
             self.dict_service.save_personal_note(combined_surface, text)
             self.dict_display.append(
-                f"<br><i style='color:{CAT["green"]};'>✓ Note saved for '{combined_surface}'</i>"
+                f"<br><i style='color:{CAT['green']};'>✓ Note saved for '{combined_surface}'</i>"
             )
             self.update_dictionary_view()
 
@@ -494,7 +525,7 @@ class YomikataApp(QMainWindow):
             "text": combined_text,
             "context": context,
             "components": components,
-            "pos": pos_list
+            "pos": pos_list,
         }
         prompt = self.ai_service.build_prompt(template, prompt_data)
 
@@ -530,7 +561,7 @@ class YomikataApp(QMainWindow):
         self.log_debug(f"AI ERROR: {err}")
         self.progress_bar.setVisible(False)
         self.ai_btn.setEnabled(True)
-        self.dict_display.append(f"<p style='color:{CAT["red"]};'>{err}</p>")
+        self.dict_display.append(f"<p style='color:{CAT['red']};'>{err}</p>")
 
     def do_definition_search(self):
         """Search inside definitions using FTS5."""
@@ -552,6 +583,20 @@ class YomikataApp(QMainWindow):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Yomikata - Japanese Reading Assistant")
+    parser.add_argument('--lookup', '-l', help='Lookup a word and exit')
+    args = parser.parse_args()
+
+    if args.lookup:
+        # CLI mode: lookup and print result
+        db = DatabaseManager()
+        config = ConfigManager()
+        extra_dicts = config.extra_dictionaries
+        # lemma defaults to word when in CLI mode (no morphological analysis)
+        result = db.lookup(args.lookup, args.lookup, extra_dicts)
+        print(result or "No results found")
+        sys.exit(0)
+
     app = QApplication(sys.argv)
 
     # Load custom fonts

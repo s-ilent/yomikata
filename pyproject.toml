@@ -8,6 +8,7 @@ dependencies = [
     "fugashi>=1.5.2",
     "jamdict>=0.1a11.post2",
     "jamdict-data>=1.5",
+    "lxml>=6.1.0",
     "markdown>=3.10.2",
     "ollama>=0.6.2",
     "openai>=2.33.0",

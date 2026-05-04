@@ -1,10 +1,15 @@
 import os
 import re
 import ast
+import json
 import sqlite3
+from pathlib import Path
 
 import fugashi
 from jamdict import Jamdict
+import jamdict_data
+
+from yomitan_parser import _flatten_content
 
 
 class DatabaseManager:
@@ -13,7 +18,9 @@ class DatabaseManager:
         self._conn_cache = {}  # Cache open connections
         self.init_main_db()
         # Initialize jamdict for JMDict lookups
-        self.jam = Jamdict()
+        # Use jamdict-data pre-built database
+        db_path = os.path.join(os.path.dirname(jamdict_data.__file__), 'jamdict.db')
+        self.jam = Jamdict(db_path=db_path)
 
     def get_conn(self, db_path=None):
         if db_path is None:
@@ -201,17 +208,28 @@ class DatabaseManager:
     def lookup_jmdict(self, word):
         """Look up word in JMDict via jamdict and return formatted string."""
         try:
+            # Check if jamdict is properly initialized
+            if not self.jam.is_available():
+                return None
+
             result = self.jam.lookup(word)
             if not result.entries:
                 return None
 
             output = []
             for entry in result.entries:
-                # entry.text() is what currently returns the raw blob
-                # Format: "headword [reading] / glossary"
-                output.append(f"**{entry.headword}** [{entry.reading}]<br>{entry.glossary}")
+                # JMDEntry uses text(), kanji_forms, kana_forms, senses
+                headwords = entry.kanji_forms or []
+                readings = entry.kana_forms or []
+                # Use the first kanji as headword, first kana as reading
+                headword = headwords[0] if headwords else ""
+                reading = readings[0] if readings else ""
+                # Use text() for formatted glossary
+                glossary = entry.text() or ""
+                if headword and glossary:
+                    output.append(f"**{headword}** [{reading}]<br>{glossary}")
 
-            return "<br><br>".join(output)
+            return "<br><br>".join(output) if output else None
         except Exception as e:
             print(f"JMDict lookup error: {e}")
             return None
@@ -253,7 +271,7 @@ class DatabaseManager:
             has_rich = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'"
             ).fetchone()
-            
+
             found_in_this_db = False
             if has_rich:
                 for form in forms_to_try:
@@ -263,6 +281,20 @@ class DatabaseManager:
                     ).fetchall()
                     if res:
                         for r, g in res:
+                            # Try to parse as structured content and flatten
+                            # Check for dict-like patterns: { or {{
+                            g_stripped = g.strip() if isinstance(g, str) else ""
+                            if g_stripped.startswith(('{', '[', "'{'")):
+                                try:
+                                    # Try JSON first
+                                    try:
+                                        parsed = json.loads(g)
+                                    except json.JSONDecodeError:
+                                        # Fall back to Python literal_eval for dict repr
+                                        parsed = ast.literal_eval(g)
+                                    g = _flatten_content(parsed)
+                                except (json.JSONDecodeError, TypeError, ValueError, SyntaxError):
+                                    pass  # Keep original string
                             results.append(f"### 📖 {db_name} ({form} [{r}])\n{g}")
                         found_in_this_db = True
                         break # Only take the best match form

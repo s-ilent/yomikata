@@ -236,6 +236,7 @@ class DatabaseManager:
                         res = conn.execute("SELECT definition FROM dictionary WHERE headword = ?", (form,)).fetchall()
                         if res:
                             for (definition,) in res:
+                                definition = _format_card_content(definition)
                                 entries.append({"source": db_path, "content": definition, "card_type": "legacy"})
                             break
 

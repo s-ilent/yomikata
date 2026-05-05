@@ -176,7 +176,7 @@ class BaseDictionaryCard(QFrame):
         """)
         layout.addWidget(label)
 
-        # Content
+        # Content - use QLabel with selectable text
         content_label = QLabel(content if content else "No definitions")
         content_label.setObjectName("Content")
         content_label.setStyleSheet(f"""
@@ -187,6 +187,8 @@ class BaseDictionaryCard(QFrame):
             }}
         """)
         content_label.setWordWrap(True)
+        content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        content_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         layout.addWidget(content_label)
 
 

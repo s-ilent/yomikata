@@ -496,7 +496,7 @@ class YomikataApp(QMainWindow):
         pos_list = ", ".join(set([t["pos"] for t in self.selection_list]))
         lemma_list = " + ".join(set([t["lemma"] for t in self.selection_list]))
 
-        # Clear existing cards from stack
+        # Clear existing cards from stack (including stretch)
         while self.card_stack.layout().count():
             child = self.card_stack.layout().takeAt(0)
             if child.widget():
@@ -504,15 +504,18 @@ class YomikataApp(QMainWindow):
 
         # Add word header card
         header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
-        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, header_card)
+        self.card_stack.layout().addWidget(header_card)
 
         # Fetch dictionary content using structured lookup
         extra_dicts = self.config.extra_dictionaries
         result = self.dict_service.lookup_structured(combined_surface, lemma_list, extra_dicts)
 
-        # Create cards from structured entries
-        for entry in reversed(result.get("entries", [])):
+        # Create cards from structured entries (in normal order)
+        for entry in result.get("entries", []):
             self._add_entry_card(entry)
+
+        # Add stretch at the end
+        self.card_stack.layout().addStretch()
 
         self.ai_btn.setEnabled(True)
         self.edit_note_btn.setEnabled(True)
@@ -533,7 +536,7 @@ class YomikataApp(QMainWindow):
         else:
             card = YomitanCard(source, content, priority)
 
-        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, card)
+        self.card_stack.layout().addWidget(card)
 
     def apply_custom_css(self, html):
         return f"""

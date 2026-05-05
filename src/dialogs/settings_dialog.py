@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -323,9 +324,75 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(content_container)
 
     def refresh_dict_list(self):
+        """Refresh dictionary list with checkboxes and display names."""
         self.dict_list.clear()
+
+        # Add JMDict as a toggleable source
+        jmdict_item = QListWidgetItem("JMDict (built-in)")
+        jmdict_item.setFlags(jmdict_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        jmdict_item.setCheckState(Qt.CheckState.Checked if self.config.get("jmdict_enabled", True) else Qt.CheckState.Unchecked)
+        jmdict_item.setData(Qt.ItemDataRole.UserRole, ("jmdict", ""))
+        jmdict_item.setToolTip("Toggle JMDict lookup")
+        self.dict_list.addItem(jmdict_item)
+
+        # Add external dictionaries with checkboxes
         dicts = self.config.extra_dictionaries
-        self.dict_list.addItems(dicts)
+        for db_path in dicts:
+            display_name = self._get_dictionary_display_name(db_path)
+            item = QListWidgetItem(f"✓ {display_name}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, (display_name, db_path))
+            item.setToolTip(db_path)
+            self.dict_list.addItem(item)
+
+    def _get_dictionary_display_name(self, db_path: str) -> str:
+        """Extract a readable name from the database file."""
+        if not os.path.exists(db_path):
+            return os.path.basename(db_path) + " (not found)"
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            # Try to get dictionary name from metadata or table
+            # Check dictionary_entries table first
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'")
+            if cursor.fetchone():
+                cursor.execute("SELECT dictionary_name FROM dictionary_entries LIMIT 1")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    conn.close()
+                    return row[0]
+
+            # Fall back to filename without extension
+            conn.close()
+            base_name = os.path.basename(db_path)
+            # Remove common prefixes like "01 ", "02 ", etc.
+            import re
+            cleaned = re.sub(r'^\d+\s+\[.*?\]\s*', '', base_name)
+            name = os.path.splitext(cleaned)[0]
+            return name
+        except Exception as e:
+            return os.path.basename(db_path)
+
+    def _get_enabled_dicts(self) -> list[str]:
+        """Get list of enabled dictionary paths."""
+        enabled = []
+        for i in range(self.dict_list.count()):
+            item = self.dict_list.item(i)
+            data = item.data(Qt.ItemDataRole.UserRole)
+            if data:
+                name, path = data
+                if name == "jmdict":
+                    # Handle JMDict toggle separately via config
+                    if item.checkState() == Qt.CheckState.Checked:
+                        self.config.set("jmdict_enabled", True)
+                    else:
+                        self.config.set("jmdict_enabled", False)
+                elif path and item.checkState() == Qt.CheckState.Checked:
+                    enabled.append(path)
+        return enabled
 
     def refresh_notes_list(self):
         self.notes_list.clear()
@@ -381,14 +448,21 @@ class SettingsDialog(QDialog):
     def remove_dictionary(self):
         current = self.dict_list.currentItem()
         if current:
-            self.config.remove_extra_dictionary(current.text())
-            self.refresh_dict_list()
+            data = current.data(Qt.ItemDataRole.UserRole)
+            if data:
+                name, path = data
+                if path:  # Not the JMDict row
+                    self.config.remove_extra_dictionary(path)
+                    self.refresh_dict_list()
 
     def move_dictionary_up(self):
         row = self.dict_list.currentRow()
-        if row > 0:
+        # Account for JMDict at row 0 - only move if row > 1
+        if row > 1:
+            # Adjust for JMDict row at index 0
             dicts = self.config.extra_dictionaries
-            dicts[row], dicts[row - 1] = dicts[row - 1], dicts[row]
+            dict_idx = row - 1  # Adjust for JMDict row
+            dicts[dict_idx], dicts[dict_idx - 1] = dicts[dict_idx - 1], dicts[dict_idx]
             self.config.set_extra_dictionaries(dicts)
             self.refresh_dict_list()
             self.dict_list.setCurrentRow(row - 1)
@@ -396,8 +470,9 @@ class SettingsDialog(QDialog):
     def move_dictionary_down(self):
         row = self.dict_list.currentRow()
         dicts = self.config.extra_dictionaries
-        if row < len(dicts) - 1:
-            dicts[row], dicts[row + 1] = dicts[row + 1], dicts[row]
+        if row > 0 and row < len(dicts):
+            dict_idx = row - 1  # Adjust for JMDict row
+            dicts[dict_idx], dicts[dict_idx + 1] = dicts[dict_idx + 1], dicts[dict_idx]
             self.config.set_extra_dictionaries(dicts)
             self.refresh_dict_list()
             self.dict_list.setCurrentRow(row + 1)
@@ -548,5 +623,10 @@ class SettingsDialog(QDialog):
         self.config.set("api_url", self.api_url.text())
         self.config.set("api_key", self.api_key.text())
         self.config.set("ai_model", self.ai_model.text())
+
+        # Save enabled dictionaries
+        enabled_dicts = self._get_enabled_dicts()
+        self.config.set_extra_dictionaries(enabled_dicts)
+
         self.settings_saved.emit(font_size, history_size)
         self.accept()

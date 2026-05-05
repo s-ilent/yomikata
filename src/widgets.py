@@ -1,4 +1,3 @@
-
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtCore import pyqtSignal as QtSignal
 from PyQt6.QtGui import QCursor, QFont, QFontMetrics, QPainter
@@ -125,3 +124,175 @@ class TokenWidget(QFrame):
         # Check if Control key is held
         ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
         self.clicked.emit(self.data, bool(ctrl_held))
+
+
+# ===== Dictionary Card Widgets =====
+
+class DictionaryCardStack(QFrame):
+    """Container widget for stacking dictionary cards."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DictionaryCardStack")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addStretch()
+        self.setStyleSheet("""
+            QFrame#DictionaryCardStack {
+                background: transparent;
+            }
+        """)
+
+
+class BaseDictionaryCard(QFrame):
+    """Base class for dictionary cards with consistent styling."""
+
+    def __init__(self, source_label: str, content: str, accent_color: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {CAT['surface']};
+                border-left: 4px solid {accent_color};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(2)
+
+        # Source label
+        label = QLabel(source_label)
+        label.setObjectName("SourceLabel")
+        label.setStyleSheet(f"""
+            QLabel#SourceLabel {{
+                background: transparent;
+                font-size: 12px;
+                font-weight: bold;
+                color: {accent_color};
+            }}
+        """)
+        layout.addWidget(label)
+
+        # Content
+        content_label = QLabel(content if content else "No definitions")
+        content_label.setObjectName("Content")
+        content_label.setStyleSheet(f"""
+            QLabel#Content {{
+                background: transparent;
+                font-size: 14px;
+                color: {CAT['foreground']};
+            }}
+        """)
+        content_label.setWordWrap(True)
+        layout.addWidget(content_label)
+
+
+class WordHeaderCard(QFrame):
+    """Header card showing word, reading, lemma, POS."""
+
+    def __init__(self, headword, reading, romaji, lemma, pos, parent=None):
+        super().__init__(parent)
+        self.setObjectName("WordHeaderCard")
+        self.setStyleSheet(f"""
+            QFrame#WordHeaderCard {{
+                background: {CAT['surface']};
+                border-left: 4px solid {CAT['red']};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setSpacing(4)
+
+        # Headword (large, red)
+        headword_label = QLabel(headword)
+        headword_label.setObjectName("Headword")
+        headword_label.setStyleSheet(f"""
+            QLabel#Headword {{
+                font-size: 24px;
+                font-weight: bold;
+                color: {CAT['red']};
+            }}
+        """)
+        layout.addWidget(headword_label)
+
+        # Reading (kana + romaji, cyan)
+        reading_text = f"{reading} [{romaji}]" if romaji else reading
+        reading_label = QLabel(reading_text)
+        reading_label.setObjectName("Reading")
+        reading_label.setStyleSheet(f"""
+            QLabel#Reading {{
+                font-size: 16px;
+                color: {CAT['cyan']};
+            }}
+        """)
+        layout.addWidget(reading_label)
+
+        # Lemma + POS (green badges)
+        if lemma or pos:
+            meta_row = QLabel()
+            meta_parts = []
+            if lemma:
+                meta_parts.append(f"Lemma: {lemma}")
+            if pos:
+                meta_parts.append(f"Type: {pos}")
+            meta_row.setText(" | ".join(meta_parts))
+            meta_row.setStyleSheet(f"""
+                QLabel {{
+                    font-size: 12px;
+                    color: {CAT['green']};
+                }}
+            """)
+            layout.addWidget(meta_row)
+
+
+class JMDictCard(BaseDictionaryCard):
+    """Card for JMDict entries (blue accent)."""
+
+    def __init__(self, source_label, content, parent=None):
+        super().__init__(source_label, content, CAT['blue'], parent)
+        self.setObjectName("JMDictCard")
+
+
+class YomitanCard(BaseDictionaryCard):
+    """Card for Yomitan entries (mauve accent)."""
+
+    def __init__(self, source_label, content, priority=None, parent=None):
+        # Call parent with priority indicator in label
+        if priority and priority > 0:
+            source_label = f"{source_label} ★{priority}"
+        super().__init__(source_label, content, CAT['mauve'], parent)
+        self.setObjectName("YomitanCard")
+
+
+class JMnedictCard(BaseDictionaryCard):
+    """Card for JMnedict name entries (peach accent)."""
+
+    def __init__(self, source_label, content, parent=None):
+        super().__init__(source_label, content, CAT['peach'], parent)
+        self.setObjectName("JMnedictCard")
+
+
+class LegacyCard(BaseDictionaryCard):
+    """Card for legacy Eijiro format (surface hover accent)."""
+
+    def __init__(self, source_label, content, parent=None):
+        super().__init__(source_label, content, CAT['surface_hover'], parent)
+        self.setObjectName("LegacyCard")
+        # Override hover effect
+        self.setStyleSheet(f"""
+            QFrame#LegacyCard {{
+                background: {CAT['surface']};
+                border-left: 4px solid {CAT['surface_hover']};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+            QFrame#LegacyCard:hover {{
+                border-left-color: {CAT['comment']};
+            }}
+        """)

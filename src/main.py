@@ -3,7 +3,6 @@ import os
 import re
 import sys
 
-import markdown
 import qtawesome as qta
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtGui import QFontDatabase
@@ -35,7 +34,16 @@ from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
 from style import CATPPUCCIN_MOCHA as CAT
 from style import build_stylesheet, get_font_size
-from widgets import PunctuationWidget, TokenWidget
+from widgets import (
+    DictionaryCardStack,
+    JMDictCard,
+    JMnedictCard,
+    LegacyCard,
+    PunctuationWidget,
+    TokenWidget,
+    WordHeaderCard,
+    YomitanCard,
+)
 
 # AI Prompt Templates
 AI_TEMPLATES = {
@@ -154,8 +162,13 @@ class YomikataApp(QMainWindow):
         right_container.setObjectName("rightPanel")
         right_layout = QVBoxLayout(right_container)
 
-        self.dict_display = QTextEdit()
-        self.dict_display.setReadOnly(True)
+        # Dictionary display as card stack in scroll area
+        dict_scroll = QScrollArea()
+        dict_scroll.setWidgetResizable(True)
+        dict_scroll.setStyleSheet("border: none;")
+
+        self.card_stack = DictionaryCardStack()
+        dict_scroll.setWidget(self.card_stack)
 
         # Search box for FTS
         search_layout = QHBoxLayout()
@@ -240,7 +253,7 @@ class YomikataApp(QMainWindow):
         dict_label.setStyleSheet("background: transparent;")
         right_layout.addWidget(dict_label)
         right_layout.addLayout(search_layout)
-        right_layout.addWidget(self.dict_display)
+        right_layout.addWidget(dict_scroll)
         right_layout.addLayout(ai_controls_layout)
 
         # Note buttons row
@@ -418,9 +431,9 @@ class YomikataApp(QMainWindow):
                 combined_surface, self.last_ai_response
             )
 
-            self.dict_display.append(
-                f"<br><i style='color:{CAT['green']};'>✓ Saved '{combined_surface}' to personal dictionary!</i>"
-            )
+            # Show success as a card
+            success_card = LegacyCard("Personal Note", f"✓ Saved '{combined_surface}' to personal dictionary!")
+            self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, success_card)
             self.save_ai_btn.setVisible(False)
 
     def edit_note(self):
@@ -441,9 +454,6 @@ class YomikataApp(QMainWindow):
         )
         if ok and text:
             self.dict_service.save_personal_note(combined_surface, text)
-            self.dict_display.append(
-                f"<br><i style='color:{CAT['green']};'>✓ Note saved for '{combined_surface}'</i>"
-            )
             self.update_dictionary_view()
 
     def log_debug(self, message):
@@ -486,25 +496,44 @@ class YomikataApp(QMainWindow):
         pos_list = ", ".join(set([t["pos"] for t in self.selection_list]))
         lemma_list = " + ".join(set([t["lemma"] for t in self.selection_list]))
 
-        # RICH MARKDOWN HEADER
-        markdown_text = f"""
-# {combined_surface}
-**Reading:** `{combined_kana}` | `{combined_romaji}`
+        # Clear existing cards from stack
+        while self.card_stack.layout().count():
+            child = self.card_stack.layout().takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
-**Lemma:** _{lemma_list}_ | **Type:** {pos_list}
+        # Add word header card
+        header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
+        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, header_card)
 
----
-"""
-        # Fetch dictionary content
+        # Fetch dictionary content using structured lookup
         extra_dicts = self.config.extra_dictionaries
-        raw_defs = self.dict_service.lookup(combined_surface, lemma_list, extra_dicts)
-        markdown_text += self.format_definition(raw_defs)
+        result = self.dict_service.lookup_structured(combined_surface, lemma_list, extra_dicts)
 
-        # Render
-        html = markdown.markdown(markdown_text, extensions=["extra"])
-        self.dict_display.setHtml(self.apply_custom_css(html))
+        # Create cards from structured entries
+        for entry in reversed(result.get("entries", [])):
+            self._add_entry_card(entry)
+
         self.ai_btn.setEnabled(True)
         self.edit_note_btn.setEnabled(True)
+
+    def _add_entry_card(self, entry: dict):
+        """Create and add the appropriate card type for an entry."""
+        source = entry.get("source", "Dictionary")
+        content = entry.get("content", "")
+        card_type = entry.get("card_type", "yomitan")
+        priority = entry.get("priority", 0)
+
+        if card_type == "jmdict":
+            card = JMDictCard(source, content)
+        elif card_type == "jmnedict":
+            card = JMnedictCard(source, content)
+        elif card_type == "legacy":
+            card = LegacyCard(source, content)
+        else:
+            card = YomitanCard(source, content, priority)
+
+        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, card)
 
     def apply_custom_css(self, html):
         return f"""
@@ -597,27 +626,17 @@ class YomikataApp(QMainWindow):
         self.ai_btn.setEnabled(True)
         self.last_ai_response = response
 
-        # Convert Markdown to HTML
-        html_content = markdown.markdown(response)
-
-        # Add some basic CSS to the HTML to make it look nice in the dark theme
-        styled_html = f"""
-        <style>
-            b, strong {{ color: {CAT["blue"]}; }}
-            li {{ margin-bottom: 5px; }}
-            code {{ background-color: {CAT["surface"]}; padding: 2px; }}
-        </style>
-        {html_content}
-        """
-        self.dict_display.append("<br><hr>")
-        self.dict_display.append(styled_html)
+        # Display AI response as a card
+        ai_card = LegacyCard("AI Sensei", response)
+        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, ai_card)
         self.save_ai_btn.setVisible(True)
 
     def on_ai_error(self, err):
         self.log_debug(f"AI ERROR: {err}")
         self.progress_bar.setVisible(False)
         self.ai_btn.setEnabled(True)
-        self.dict_display.append(f"<p style='color:{CAT['red']};'>{err}</p>")
+        error_card = LegacyCard("Error", err)
+        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, error_card)
 
     def do_definition_search(self):
         """Search inside definitions using FTS5."""
@@ -628,14 +647,14 @@ class YomikataApp(QMainWindow):
         extra_dicts = self.config.extra_dictionaries
         results = self.dict_service.search_definitions(query, extra_dicts)
 
-        markdown_text = f"# Search: {query}\n\n"
-        if results:
-            markdown_text += results
-        else:
-            markdown_text += "_No matches found in definitions._"
+        # Clear cards and show search results
+        while self.card_stack.layout().count():
+            child = self.card_stack.layout().takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
-        html = markdown.markdown(markdown_text, extensions=["extra"])
-        self.dict_display.setHtml(self.apply_custom_css(html))
+        search_card = LegacyCard(f"Search: {query}", results if results else "No matches found.")
+        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, search_card)
 
 
 if __name__ == "__main__":
@@ -646,44 +665,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.import_yomitan:
-        # CLI mode: import dictionary from ZIP
-        zip_path, target_db = args.import_yomitan
-        if not os.path.exists(zip_path):
-            print(f"Error: File not found: {zip_path}")
+        # CLI mode: import dictionary from ZIP or TXT
+        path, target_db = args.import_yomitan
+        if not os.path.exists(path):
+            print(f"Error: File not found: {path}")
             sys.exit(1)
 
-        print(f"Importing {zip_path} -> {target_db}...")
-
-        import sqlite3
-        conn = sqlite3.connect(target_db)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS dictionary_entries (
-                headword TEXT,
-                reading TEXT,
-                pos TEXT,
-                pitch_accent TEXT,
-                glossary TEXT,
-                priority INTEGER,
-                dictionary_name TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary_entries(headword)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
-
-        from yomitan_parser import parse_yomitan_zip
-        count = 0
-        for entry in parse_yomitan_zip(zip_path):
-            conn.execute("""
-                INSERT INTO dictionary_entries (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (entry['headword'], entry['reading'], entry['pos'], entry['pitch_accent'],
-                  entry['glossary'], entry['priority'], entry['dictionary_name']))
-            count += 1
-            if count % 10000 == 0:
-                print(f"  Imported {count} entries...")
-
-        conn.commit()
-        conn.close()
+        from database import import_dictionary_archive
+        count = import_dictionary_archive(path, target_db)
         print(f"Done. Imported {count} entries to {target_db}")
         sys.exit(0)
 

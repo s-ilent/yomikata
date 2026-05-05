@@ -11,8 +11,44 @@ from jamdict import Jamdict
 from yomitan_parser import _flatten_content
 
 # Configure logger
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("yomikata.database")
+
+
+def _format_card_content(content: str) -> str:
+    """Format dictionary content for card display."""
+    if not content:
+        return ""
+
+    # Clean up newlines and whitespace
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Add line breaks before numbered senses (◆1, ◆2, etc.)
+    content = re.sub(r'(◆)(\d+)', r'\n\1\2', content)
+
+    # Add line breaks before circled numbers ◆[①②③④⑤⑥⑦⑧⑨⑩]
+    content = re.sub(r'(◆[①②③④⑤⑥⑦⑧⑨⑩])', r'\n\1', content)
+
+    # Break before bracketed numbers (【1】or (1))
+    content = re.sub(r'([（\(【]\d+[】\)\)])', r'\n\1', content)
+
+    # Break before numbered Japanese patterns like "1 〔...〕" or "1〔...〕"
+    content = re.sub(r'(\d+\s*〔)', r'\n\1', content)
+
+    # Break before patterns like "1)" after Japanese characters
+    content = re.sub(r'([一-龥あ-んァ-ン])(\))', r'\1\n\2', content)
+
+    # Break on "1." "2." patterns in definitions  
+    content = re.sub(r'(\d+)\.\s+', r'\n\1. ', content)
+
+    # Clean up multiple newlines to double-newlines for paragraph separation
+    content = re.sub(r'\n{3,}', '\n\n', content)
+
+    # Strip leading/trailing whitespace from each line
+    lines = [line.strip() for line in content.split('\n')]
+    content = '\n'.join(lines)
+
+    return content
 
 
 class DatabaseManager:
@@ -21,7 +57,7 @@ class DatabaseManager:
         self._conn_cache: dict[str, sqlite3.Connection] = {}  # Cache open connections
         # Initialize jamdict for JMDict lookups
         # Use jamdict-data pre-built database
-        db_path = os.path.join(os.path.dirname(jamdict_data.__file__), 'jamdict.db')
+        db_path = os.path.join(os.path.dirname(jamdict_data.__file__), "jamdict.db")
         self.jam = Jamdict(db_path=db_path)
         self.init_main_db()
 
@@ -47,6 +83,7 @@ class DatabaseManager:
             conn.execute("PRAGMA journal_mode = WAL")
             try:
                 import sqlite_zstd
+
                 conn.enable_load_extension(True)
                 sqlite_zstd.load(conn)
             except Exception as e:
@@ -78,18 +115,131 @@ class DatabaseManager:
                 definition TEXT
             )
         """)
-        # Create FTS for personal notes - index only definition to save space
-        cursor.execute("DROP TABLE IF EXISTS personal_dict_fts")
-        cursor.execute("""
-            CREATE VIRTUAL TABLE personal_dict_fts USING fts5(
-                definition, 
-                content='personal_dict',
-                tokenize='trigram',
-                detail=column
-            )
-        """)
-        # Sync FTS for personal notes
-        cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts) VALUES('rebuild')")
+
+    def lookup_structured(self, word: str, lemma: str, extra_paths: list[str] | None = None) -> dict:
+        """
+        Lookup word and return structured entry data for card display.
+
+        Returns:
+            dict with keys: headword, entries where entries is list of:
+            {"source": str, "content": str, "card_type": str, "priority": int}
+        """
+        import json as json_module
+
+        entries = []
+
+        # 1. Personal Note
+        note = self.get_personal_note(word) or self.get_personal_note(lemma)
+        if note:
+            entries.append({"source": "Personal Note", "content": note, "card_type": "legacy"})
+
+        # 2. JMDict via jamdict
+        jm_result = self.lookup_jmdict(word)
+        if jm_result:
+            entries.append({"source": "JMDict", "content": jm_result, "card_type": "jmdict"})
+
+        # 3. Search all registered DBs with multiple forms
+        search_paths = [self.main_db] + (extra_paths or [])
+
+        # Collect all forms to search
+        forms_to_try = [word]
+        inflected_forms = self.get_inflected_forms(word)
+        for form in inflected_forms:
+            if form and form != word and form != lemma and form not in forms_to_try:
+                forms_to_try.append(form)
+
+        if lemma and lemma != word and lemma not in forms_to_try:
+            forms_to_try.append(lemma)
+
+        for path in set(search_paths):
+            if not os.path.exists(path):
+                continue
+
+            db_path = os.path.basename(path)
+            conn = self.get_conn(path)
+
+            # Try to search 'dictionary_entries' (rich) table
+            has_rich = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'"
+            ).fetchone()
+
+            found_in_this_db = False
+            if has_rich:
+                for form in forms_to_try:
+                    # Check if dictionary_meta column exists
+                    cols = [c[1] for c in conn.execute("PRAGMA table_info(dictionary_entries)").fetchall()]
+                    has_meta = "dictionary_meta" in cols
+
+                    if has_meta:
+                        res = conn.execute(
+                            """SELECT reading, glossary, dictionary_name, dictionary_meta, priority
+                            FROM dictionary_entries WHERE headword = ? OR reading = ?""",
+                            (form, form),
+                        ).fetchall()
+                    else:
+                        res = conn.execute(
+                            """SELECT reading, glossary, dictionary_name, priority
+                            FROM dictionary_entries WHERE headword = ? OR reading = ?""",
+                            (form, form),
+                        ).fetchall()
+                        # Pad with None for dict_meta
+                        res = [(r[0], r[1], r[2], None, r[3]) for r in res]
+
+                    if res:
+                        for row in res:
+                            if has_meta:
+                                reading, glossary, dict_name, dict_meta, priority = row
+                            else:
+                                reading, glossary, dict_name = row[:3]
+                                dict_meta = None
+                                priority = row[3] if len(row) > 3 else 0
+
+                            # Parse glossary if structured
+                            g_stripped = glossary.strip() if isinstance(glossary, str) else ""
+                            if g_stripped.startswith(("{", "[", "'{")):
+                                try:
+                                    parsed = json_module.loads(g_stripped)
+                                    glossary = _flatten_content(parsed)
+                                except (json_module.JSONDecodeError, TypeError, ValueError, SyntaxError):
+                                    pass  # Keep original string
+
+                            # Format the content for display
+                            glossary = _format_card_content(glossary)
+
+                            # Determine card type from dictionary_name
+                            card_type = "yomitan"
+                            if dict_name:
+                                name_lower = dict_name.lower()
+                                if "jmnedict" in name_lower or "name" in name_lower:
+                                    card_type = "jmnedict"
+                            else:
+                                card_type = "legacy"
+
+                            entries.append(
+                                {
+                                    "source": dict_name or db_path,
+                                    "content": glossary,
+                                    "card_type": card_type,
+                                    "priority": priority,
+                                }
+                            )
+                        found_in_this_db = True
+                        break
+
+            # Try legacy table if not found
+            if not found_in_this_db:
+                has_legacy = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'"
+                ).fetchone()
+                if has_legacy:
+                    for form in forms_to_try:
+                        res = conn.execute("SELECT definition FROM dictionary WHERE headword = ?", (form,)).fetchall()
+                        if res:
+                            for (definition,) in res:
+                                entries.append({"source": db_path, "content": definition, "card_type": "legacy"})
+                            break
+
+        return {"headword": word, "entries": entries}
 
         # Main dictionary (Eijiro)
         cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)")
@@ -141,12 +291,11 @@ class DatabaseManager:
         # Get old definition to properly delete from FTS index
         old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
         if old_res:
-            cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],))
+            cursor.execute(
+                "INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],)
+            )
 
-        cursor.execute(
-            "INSERT OR REPLACE INTO personal_dict VALUES (?, ?)",
-            (word, definition)
-        )
+        cursor.execute("INSERT OR REPLACE INTO personal_dict VALUES (?, ?)", (word, definition))
 
         # Insert new entry into FTS
         cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
@@ -166,35 +315,29 @@ class DatabaseManager:
         if not text.strip():
             return
 
-        normalized = re.sub(r'\s+', ' ', text.strip())
+        normalized = re.sub(r"\s+", " ", text.strip())
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
 
         # Check if already exists in history
-        exists = cursor.execute(
-            "SELECT id FROM history WHERE normalized_text = ?",
-            (normalized,)
-        ).fetchone()
+        exists = cursor.execute("SELECT id FROM history WHERE normalized_text = ?", (normalized,)).fetchone()
 
         if exists:
             # Update timestamp
-            cursor.execute(
-                "UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?",
-                (exists[0],)
-            )
+            cursor.execute("UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?", (exists[0],))
         else:
             # Insert new
-            cursor.execute(
-                "INSERT INTO history (text, normalized_text) VALUES (?, ?)",
-                (text, normalized)
-            )
+            cursor.execute("INSERT INTO history (text, normalized_text) VALUES (?, ?)", (text, normalized))
 
         # Enforce limit
-        cursor.execute("""
+        cursor.execute(
+            """
             DELETE FROM history WHERE id NOT IN (
                 SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
             )
-        """, (max_entries,))
+        """,
+            (max_entries,),
+        )
         conn.commit()
 
     def get_history(self, limit: int = 50) -> list[tuple[str, str]]:
@@ -284,14 +427,14 @@ class DatabaseManager:
                 for form in forms_to_try:
                     res = conn.execute(
                         "SELECT reading, glossary FROM dictionary_entries WHERE headword = ? OR reading = ?",
-                        (form, form)
+                        (form, form),
                     ).fetchall()
                     if res:
                         for r, g in res:
                             # Try to parse as structured content and flatten
                             # Check for dict-like patterns: { or {{
                             g_stripped = g.strip() if isinstance(g, str) else ""
-                            if g_stripped.startswith(('{', '[', "'{'")):
+                            if g_stripped.startswith(("{", "[", "'{'")):
                                 try:
                                     # Try JSON first
                                     try:
@@ -304,7 +447,7 @@ class DatabaseManager:
                                     pass  # Keep original string
                             results.append(f"### 📖 {db_name} ({form} [{r}])\n{g}")
                         found_in_this_db = True
-                        break # Only take the best match form
+                        break  # Only take the best match form
 
             # Try to search 'dictionary' (legacy) table if not found or no rich table
             if not found_in_this_db:
@@ -313,12 +456,9 @@ class DatabaseManager:
                 ).fetchone()
                 if has_legacy:
                     for form in forms_to_try:
-                        res = conn.execute(
-                            "SELECT definition FROM dictionary WHERE headword = ?",
-                            (form,)
-                        ).fetchall()
+                        res = conn.execute("SELECT definition FROM dictionary WHERE headword = ?", (form,)).fetchall()
                         if res:
-                            for definition, in res:
+                            for (definition,) in res:
                                 results.append(f"### 📖 {db_name} ({form})\n{definition}")
                             break
 
@@ -352,17 +492,17 @@ class DatabaseManager:
                     ).fetchone()
                     if has_personal_fts:
                         res = conn.execute(
-                            """SELECT p.headword, p.definition 
-                               FROM personal_dict_fts f 
-                               JOIN personal_dict p ON p.rowid = f.rowid 
+                            """SELECT p.headword, p.definition
+                               FROM personal_dict_fts f
+                               JOIN personal_dict p ON p.rowid = f.rowid
                                WHERE f.definition MATCH ? ORDER BY rank LIMIT 5""",
-                            (sanitized_query,)
+                            (sanitized_query,),
                         ).fetchall()
 
                         if not res and use_like_fallback:
                             res = conn.execute(
                                 "SELECT headword, definition FROM personal_dict WHERE definition LIKE ? LIMIT 5",
-                                (f"%{query}%",)
+                                (f"%{query}%",),
                             ).fetchall()
 
                         for headword, definition in res:
@@ -374,17 +514,17 @@ class DatabaseManager:
                 ).fetchone()
                 if table_exists:
                     res = conn.execute(
-                        """SELECT d.headword, d.definition 
+                        """SELECT d.headword, d.definition
                            FROM dictionary_fts f
                            JOIN dictionary d ON d.id = f.rowid
                            WHERE f.definition MATCH ? ORDER BY rank LIMIT 10""",
-                        (sanitized_query,)
+                        (sanitized_query,),
                     ).fetchall()
 
                     if not res and use_like_fallback:
                         res = conn.execute(
                             "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
-                            (f"%{query}%",)
+                            (f"%{query}%",),
                         ).fetchall()
 
                     if res:
@@ -397,11 +537,11 @@ class DatabaseManager:
                 ).fetchone()
                 if rich_fts_exists:
                     res = conn.execute(
-                        """SELECT d.headword, d.reading, d.glossary 
+                        """SELECT d.headword, d.reading, d.glossary
                            FROM dictionary_entries_fts f
                            JOIN dictionary_entries d ON d.rowid = f.rowid
                            WHERE f.glossary MATCH ? OR f.headword MATCH ? ORDER BY rank LIMIT 10""",
-                        (sanitized_query, sanitized_query)
+                        (sanitized_query, sanitized_query),
                     ).fetchall()
                     if res:
                         for h, r, g in res:
@@ -411,8 +551,7 @@ class DatabaseManager:
                 # Fallback to LIKE
                 try:
                     res = conn.execute(
-                        "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
-                        (f"%{query}%",)
+                        "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10", (f"%{query}%",)
                     ).fetchall()
                     if res:
                         for headword, definition in res:
@@ -422,7 +561,7 @@ class DatabaseManager:
 
         return "\n\n---\n\n".join(results)
 
-# Standalone helper functions
+
 def create_fts_index(db_path: str) -> int:
     """Create or rebuild FTS5 index for an existing dictionary using external content."""
     conn = sqlite3.connect(db_path)
@@ -448,6 +587,35 @@ def create_fts_index(db_path: str) -> int:
         cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
         count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
         total_count += count
+
+    # Handle personal_dict
+    if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict'").fetchone():
+        table_name = "personal_dict"
+        fts_table = "personal_dict_fts"
+        rowid_col = "rowid"
+
+        cursor.execute(f"DROP TABLE IF EXISTS {fts_table}")
+        cursor.execute(f"""
+            CREATE VIRTUAL TABLE {fts_table} USING fts5(
+                definition,
+                content='{table_name}',
+                content_rowid='{rowid_col}',
+                tokenize='trigram',
+                detail=column
+            )
+        """)
+        cursor.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')")
+        count = cursor.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+        total_count += count
+
+    if total_count == 0:
+        conn.close()
+        return 0
+
+    conn.commit()
+    cursor.execute("VACUUM")
+    conn.close()
+    return total_count
 
     # Handle legacy dictionary table (Eijiro)
     if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary'").fetchone():
@@ -503,7 +671,8 @@ def create_fts_index(db_path: str) -> int:
     return total_count
 
 
-from typing import Callable
+from collections.abc import Callable
+
 
 def import_dictionary_file(
     source_path: str,
@@ -512,6 +681,7 @@ def import_dictionary_file(
     debug_callback: Callable[[str], None] | None = None,
 ) -> int:
     """Import entries from an Eijiro-style text file into a SQLite database."""
+
     def log(msg: str) -> None:
         if debug_callback:
             debug_callback(msg)
@@ -521,6 +691,7 @@ def import_dictionary_file(
 
     try:
         import sqlite_zstd
+
         conn.enable_load_extension(True)
         sqlite_zstd.load(conn)
     except Exception:
@@ -587,11 +758,13 @@ def export_personal_dict(output_path: str, format: str = "json") -> int:
 
     if format == "json":
         import json
+
         data = [{"headword": row[0], "definition": row[1]} for row in rows]
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     else:  # csv
         import csv
+
         with open(output_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["headword", "definition"])
@@ -609,11 +782,13 @@ def import_personal_dict(input_path: str, format: str | None = None) -> int:
 
     if format == "json":
         import json
+
         with open(input_path, encoding="utf-8") as f:
             data = json.load(f)
         entries = [(item["headword"], item["definition"]) for item in data]
     else:  # csv
         import csv
+
         with open(input_path, encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             entries = [(row["headword"], row["definition"]) for row in reader]
@@ -623,7 +798,9 @@ def import_personal_dict(input_path: str, format: str | None = None) -> int:
     conn.close()
     return len(entries)
 
-from typing import Callable
+
+from collections.abc import Callable
+
 
 def import_yomitan_zip(
     zip_path: str,
@@ -632,6 +809,7 @@ def import_yomitan_zip(
 ) -> int:
     """Import Yomitan ZIP into the database."""
     from yomitan_parser import parse_yomitan_zip
+
     entries = list(parse_yomitan_zip(zip_path))
     total = len(entries)
 
@@ -658,22 +836,25 @@ def import_yomitan_zip(
 
     batch_size = 1000
     for i in range(0, total, batch_size):
-        batch = entries[i:i+batch_size]
+        batch = entries[i : i + batch_size]
         for entry in batch:
-            cursor.execute("""
-                INSERT OR IGNORE INTO dictionary_entries 
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO dictionary_entries
                 (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name, dictionary_meta)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                entry['headword'],
-                entry['reading'],
-                entry['pos'],
-                entry['pitch_accent'],
-                entry['glossary'],
-                entry['priority'],
-                entry['dictionary_name'],
-                json.dumps(entry.get('dictionary_meta', {}))
-            ))
+            """,
+                (
+                    entry["headword"],
+                    entry["reading"],
+                    entry["pos"],
+                    entry["pitch_accent"],
+                    entry["glossary"],
+                    entry["priority"],
+                    entry["dictionary_name"],
+                    json.dumps(entry.get("dictionary_meta", {})),
+                ),
+            )
         conn.commit()
         if progress_callback:
             progress_callback(min(i + batch_size, total), total)
@@ -682,8 +863,10 @@ def import_yomitan_zip(
     create_fts_index(db_path)
     return total
 
+
 # Global instance for backward compatibility
 _db = None
+
 
 def _get_db() -> DatabaseManager:
     global _db
@@ -691,30 +874,104 @@ def _get_db() -> DatabaseManager:
         _db = DatabaseManager()
     return _db
 
+
 def init_db() -> None:
     """Initialize the database (creates tables if needed)."""
     _get_db().init_main_db()
+
 
 def lookup_word(word: str, lemma: str, extra_dicts: list[str] | None = None) -> str:
     """Backward-compatible lookup function."""
     return _get_db().lookup(word, lemma, extra_dicts)
 
+
 def save_to_personal_dict(word: str, definition: str) -> None:
     """Backward-compatible save function."""
     _get_db().save_personal_note(word, definition)
+
 
 def get_personal_note(word: str) -> str | None:
     """Get a personal note for a word."""
     return _get_db().get_personal_note(word)
 
+
 def save_history(text: str, max_entries: int = 50) -> None:
     """Backward-compatible save history function."""
     _get_db().save_history(text, max_entries)
+
 
 def get_history(limit: int = 50) -> list[tuple[str, str]]:
     """Backward-compatible get history function."""
     return _get_db().get_history(limit)
 
+
 def search_definitions(query: str, extra_dicts: list[str] | None = None) -> str:
     """Search for query inside definitions using FTS5."""
     return _get_db().search_definitions(query, extra_dicts)
+
+def import_dictionary_archive(source_path: str, target_db: str) -> int:
+    """Orchestrate the import of a dictionary from either a Yomitan ZIP or an Eijiro-style text file."""
+    import sqlite3
+    import json
+    import os
+    from yomitan_parser import parse_yomitan_zip
+
+    # Ensure a clean slate
+    if os.path.exists(target_db):
+        os.remove(target_db)
+
+    print(f"Importing {source_path} -> {target_db}...")
+
+    if source_path.lower().endswith('.zip'):
+        conn = sqlite3.connect(target_db)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dictionary_entries (
+                id INTEGER PRIMARY KEY,
+                headword TEXT NOT NULL,
+                reading TEXT,
+                pos TEXT,
+                pitch_accent TEXT,
+                glossary TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                dictionary_name TEXT,
+                dictionary_meta TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary_entries(headword)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
+
+        count = 0
+        for entry in parse_yomitan_zip(source_path):
+            # Ensure 'pos' is a string before inserting.
+            pos = entry['pos']
+            if isinstance(pos, list):
+                pos = ", ".join([str(p) for p in pos])
+            elif pos is None:
+                pos = ""
+            else:
+                pos = str(pos)
+
+            # Ensure priority is an int
+            priority = entry['priority']
+            if not isinstance(priority, int):
+                try:
+                    priority = int(priority)
+                except (ValueError, TypeError):
+                    priority = 0
+
+            conn.execute("""
+                INSERT INTO dictionary_entries (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name, dictionary_meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (entry['headword'], entry['reading'], pos, entry['pitch_accent'],
+                  entry['glossary'], priority, entry['dictionary_name'],
+                  json.dumps(entry.get('dictionary_meta', {}))))
+            count += 1
+            if count % 10000 == 0:
+                print(f"  Imported {count} entries...")
+        conn.commit()
+        conn.close()
+        return count
+    else:
+        # Assume Text (Eijiro) format
+        return import_dictionary_file(source_path, target_db, progress_callback=lambda p: print(f"Imported {p} entries..."))

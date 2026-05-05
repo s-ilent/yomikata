@@ -162,50 +162,85 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
         if 'index.json' in z.namelist():
             with z.open('index.json') as f:
                 dict_meta = json.load(f)
-        
-        dict_name = dict_meta.get('title', 'Yomitan')
-        
-        # Find all term_bank_*.json files
-        term_files = sorted([f for f in z.namelist() if 'term_bank' in f and f.endswith('.json')])
 
-        for f_name in term_files:
+        dict_name = dict_meta.get('title', 'Yomitan')
+
+        # Find all term_bank, kanji_bank, term_meta_bank, and kanji_meta_bank files
+        files = sorted([f for f in z.namelist() if any(x in f for x in ['term_bank', 'kanji_bank', 'term_meta_bank', 'kanji_meta_bank']) and f.endswith('.json')])
+
+        for f_name in files:
             with z.open(f_name) as f:
                 data = json.load(f)
+                
+                # Determine file type
+                is_kanji = 'kanji_bank' in f_name
+                is_meta = 'meta_bank' in f_name
+
                 for item in data:
-                    # Yomitan schema:
-                    # 0: kanji, 1: reading, 2: pos_tags, 3: rules, 4: score,
-                    # 5: definitions, 6: sequence, 7: tags
-                    headword = item[0]
-                    reading = item[1] if len(item) > 1 else ""
+                    if is_meta:
+                        # Meta bank schema (usually term/kanji, type, data)
+                        # We currently store these as standard entries to be searchable or merged
+                        headword = item[0]
+                        glossary = ""
+                        if len(item) > 2:
+                            payload = item[2]
+                            if isinstance(payload, dict):
+                                glossary = str(payload.get('frequency') or payload.get('displayValue') or "")
+                            else:
+                                glossary = str(payload)
+                        
+                        entry = {
+                            'headword': headword,
+                            'reading': "",
+                            'pos': "meta",
+                            'pitch_accent': "",
+                            'glossary': glossary,
+                            'priority': 0,
+                            'dictionary_name': dict_name,
+                            'dictionary_meta': dict_meta
+                        }
+                    elif is_kanji:
+                        # Kanji bank schema: 0: kanji, 1: onyomi, 2: kunyomi, 3: tags, 4: meanings, 5: stats
+                        headword = item[0]
+                        reading = "" 
+                        pos = ", ".join(item[2]) if len(item) > 2 and isinstance(item[2], list) else str(item[2] if len(item) > 2 else "")
+                        glossary = ""
+                        if len(item) > 4 and item[4]:
+                            glossary = " / ".join([_flatten_content(d) for d in item[4]]) if isinstance(item[4], list) else _flatten_content(item[4])
+                        
+                        priority = 0
+                        if len(item) > 5 and isinstance(item[5], dict):
+                            priority = item[5].get('priority', 0)
+                            
+                        entry = {
+                            'headword': headword,
+                            'reading': reading,
+                            'pos': pos,
+                            'pitch_accent': "",
+                            'glossary': glossary,
+                            'priority': priority,
+                            'dictionary_name': dict_name,
+                            'dictionary_meta': dict_meta
+                        }
+                    else:
+                        # Term bank schema: 0: kanji, 1: reading, 2: pos_tags, 3: rules, 4: score, 5: definitions
+                        headword = item[0]
+                        reading = item[1] if len(item) > 1 else ""
+                        pos = ", ".join(item[2]) if len(item) > 2 and isinstance(item[2], list) else str(item[2] if len(item) > 2 else "")
+                        glossary = ""
+                        if len(item) > 5 and item[5]:
+                            defs = item[5]
+                            glossary = " / ".join([_flatten_content(d) for d in defs]) if isinstance(defs, list) else _flatten_content(defs) if isinstance(defs, dict) else str(defs)
+                        priority = item[4] if len(item) > 4 else 0
 
-                    # Convert pos_tags list to string
-                    pos = ""
-                    if len(item) > 2 and item[2]:
-                        if isinstance(item[2], list):
-                            pos = ", ".join(item[2])
-                        else:
-                            pos = str(item[2])
-
-                    # Handle definitions (can be list, string, or structured-content dict)
-                    glossary = ""
-                    if len(item) > 5 and item[5]:
-                        defs = item[5]
-                        if isinstance(defs, list):
-                            glossary = " / ".join([_flatten_content(d) for d in defs])
-                        elif isinstance(defs, dict):
-                            glossary = _flatten_content(defs)
-                        else:
-                            glossary = str(defs)
-
-                    priority = item[4] if len(item) > 4 else 0
-
-                    yield {
-                        'headword': headword,
-                        'reading': reading,
-                        'pos': pos,
-                        'pitch_accent': "",
-                        'glossary': glossary,
-                        'priority': priority,
-                        'dictionary_name': dict_name,
-                        'dictionary_meta': dict_meta
-                    }
+                        entry = {
+                            'headword': headword,
+                            'reading': reading,
+                            'pos': pos,
+                            'pitch_accent': "",
+                            'glossary': glossary,
+                            'priority': priority,
+                            'dictionary_name': dict_name,
+                            'dictionary_meta': dict_meta
+                        }
+                    yield entry

@@ -23,6 +23,10 @@ def _format_card_content(content: str) -> str:
     # Clean up newlines and whitespace
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 
+    # Add line breaks before bullet points (●, ○)
+    content = re.sub(r'(●)', r'\n\1', content)
+    content = re.sub(r'(○)', r'\n\1', content)
+
     # Add line breaks before numbered senses (◆1, ◆2, etc.)
     content = re.sub(r'(◆)(\d+)', r'\n\1\2', content)
 
@@ -378,9 +382,9 @@ class DatabaseManager:
                 # Use text() for formatted glossary
                 glossary = entry.text() or ""
                 if headword and glossary:
-                    output.append(f"**{headword}** [{reading}]<br>{glossary}")
+                    output.append(f"**{headword}** [{reading}]\n{glossary}")
 
-            return "<br><br>".join(output) if output else None
+            return "\n\n---\n\n".join(output) if output else None
         except Exception as e:
             print(f"JMDict lookup error: {e}")
             return None

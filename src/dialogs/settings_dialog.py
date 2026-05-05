@@ -373,7 +373,7 @@ class SettingsDialog(QDialog):
             cleaned = re.sub(r'^\d+\s+\[.*?\]\s*', '', base_name)
             name = os.path.splitext(cleaned)[0]
             return name
-        except Exception as e:
+        except Exception:
             return os.path.basename(db_path)
 
     def _get_enabled_dicts(self) -> list[str]:

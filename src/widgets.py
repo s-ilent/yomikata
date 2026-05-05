@@ -4,6 +4,7 @@ from PyQt6.QtGui import QCursor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
+    QSizePolicy,
     QStyle,
     QStyleOption,
     QVBoxLayout,
@@ -163,22 +164,25 @@ class BaseDictionaryCard(QFrame):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
 
-        # Source label
+        # Source label - styled as superscript
         label = QLabel(source_label)
         label.setObjectName("SourceLabel")
         label.setStyleSheet(f"""
             QLabel#SourceLabel {{
                 background: transparent;
-                font-size: 12px;
+                font-size: 10px;
                 font-weight: bold;
                 color: {accent_color};
+                padding: 0;
+                margin: 0;
             }}
         """)
         layout.addWidget(label)
 
-        # Content - use QLabel with selectable text
+        # Content - use QLabel with Markdown support
         content_label = QLabel(content if content else "No definitions")
         content_label.setObjectName("Content")
+        content_label.setTextFormat(Qt.TextFormat.MarkdownText)
         content_label.setStyleSheet(f"""
             QLabel#Content {{
                 background: transparent;

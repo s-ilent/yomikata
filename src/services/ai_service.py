@@ -1,11 +1,17 @@
+from collections.abc import Callable
 from ai_worker import AIWorker
 
 
 class AIService:
-    def __init__(self):
-        self._current_worker = None
+    def __init__(self) -> None:
+        self._current_worker: AIWorker | None = None
 
-    def run_analysis(self, prompt: str, on_finished, on_error):
+    def run_analysis(
+        self,
+        prompt: str,
+        on_finished: Callable[[str], None],
+        on_error: Callable[[str], None],
+    ) -> None:
         """
         Instantiate and start an AIWorker for text analysis.
         """

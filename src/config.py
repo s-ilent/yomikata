@@ -43,21 +43,22 @@ class ConfigManager:
         return str(self.get("ai_model", "llama3"))
 
     @property
-    def extra_dictionaries(self) -> list:
-        return self.get("extra_dictionaries", [])
+    def extra_dictionaries(self) -> list[str]:
+        val = self.get("extra_dictionaries", [])
+        return list(val) if isinstance(val, list) else []
 
-    def add_extra_dictionary(self, path: str):
+    def add_extra_dictionary(self, path: str) -> None:
         dicts = self.extra_dictionaries
         if path not in dicts:
             dicts.append(path)
             self.set("extra_dictionaries", dicts)
 
-    def remove_extra_dictionary(self, path: str):
+    def remove_extra_dictionary(self, path: str) -> None:
         dicts = self.extra_dictionaries
         if path in dicts:
             dicts.remove(path)
             self.set("extra_dictionaries", dicts)
 
-    def set_extra_dictionaries(self, dicts: list):
+    def set_extra_dictionaries(self, dicts: list[str]) -> None:
         """Replace the entire extra_dictionaries list (for reordering)."""
         self.set("extra_dictionaries", dicts)

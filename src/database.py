@@ -648,6 +648,7 @@ def import_yomitan_zip(
             glossary TEXT NOT NULL,
             priority INTEGER DEFAULT 0,
             dictionary_name TEXT,
+            dictionary_meta TEXT,
             UNIQUE(headword, reading, dictionary_name)
         )
     """)
@@ -661,8 +662,8 @@ def import_yomitan_zip(
         for entry in batch:
             cursor.execute("""
                 INSERT OR IGNORE INTO dictionary_entries 
-                (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (headword, reading, pos, pitch_accent, glossary, priority, dictionary_name, dictionary_meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry['headword'],
                 entry['reading'],
@@ -670,7 +671,8 @@ def import_yomitan_zip(
                 entry['pitch_accent'],
                 entry['glossary'],
                 entry['priority'],
-                entry['dictionary_name']
+                entry['dictionary_name'],
+                json.dumps(entry.get('dictionary_meta', {}))
             ))
         conn.commit()
         if progress_callback:

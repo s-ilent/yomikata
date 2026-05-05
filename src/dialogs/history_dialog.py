@@ -58,7 +58,9 @@ class HistoryDialog(QDialog):
         cards_layout.addStretch()
 
         if entries:
-            for text, timestamp in entries:
+            for entry in entries:
+                text = entry.get("text", "")
+                timestamp = entry.get("timestamp", "")
                 # Create card frame
                 card = QFrame()
                 card.setFrameShape(QFrame.Shape.StyledPanel)

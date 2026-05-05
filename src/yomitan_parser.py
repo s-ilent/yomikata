@@ -153,9 +153,18 @@ def _extract_forms(content) -> str:
 def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
     """Parse Yomitan ZIP file and yield dictionary entries.
     
-    Yields dicts with keys: headword, reading, pos, pitch_accent, glossary, priority
+    Yields dicts with keys: headword, reading, pos, pitch_accent, glossary, priority,
+    dictionary_name, dictionary_meta
     """
     with zipfile.ZipFile(zip_path, 'r') as z:
+        # Read metadata from index.json
+        dict_meta = {}
+        if 'index.json' in z.namelist():
+            with z.open('index.json') as f:
+                dict_meta = json.load(f)
+        
+        dict_name = dict_meta.get('title', 'Yomitan')
+        
         # Find all term_bank_*.json files
         term_files = sorted([f for f in z.namelist() if 'term_bank' in f and f.endswith('.json')])
 
@@ -197,5 +206,6 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
                         'pitch_accent': "",
                         'glossary': glossary,
                         'priority': priority,
-                        'dictionary_name': 'Yomitan'
+                        'dictionary_name': dict_name,
+                        'dictionary_meta': dict_meta
                     }

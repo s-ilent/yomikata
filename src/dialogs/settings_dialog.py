@@ -1,18 +1,38 @@
 import os
 import sqlite3
+
 import qtawesome as qta
-from PyQt6.QtCore import Qt, pyqtSignal, QTime
+from PyQt6.QtCore import Qt, QTime, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QStackedWidget, QWidget, QFormLayout, QHBoxLayout,
-    QSlider, QLabel, QComboBox, QLineEdit, QTextEdit, QPushButton,
-    QListWidget, QFileDialog, QProgressBar, QMessageBox, QGroupBox,
-    QApplication, QFrame
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSlider,
+    QStackedWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from widgets import (
-    create_fts_index, import_dictionary_file, export_personal_dict, 
-    import_personal_dict, ImportWorker
-)
+
 from config import ConfigManager
+from database import (
+    create_fts_index,
+    export_personal_dict,
+    import_personal_dict,
+)
+from widgets import ImportWorker
+
 
 class SettingsDialog(QDialog):
     settings_saved = pyqtSignal(int, int) # font_size, history_size

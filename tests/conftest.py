@@ -1,8 +1,10 @@
-import pytest
 import os
 import tempfile
+
+import pytest
+
 from database import DatabaseManager
-from config import ConfigManager
+
 
 @pytest.fixture
 def tmp_db_path():
@@ -20,10 +22,10 @@ def db_manager(tmp_db_path):
     manager = DatabaseManager.__new__(DatabaseManager)
     manager.main_db = tmp_db_path
     manager._conn_cache = {}
-    
+
     # Manually mimic the init, skipping jamdict for speed/safety in tests
     # Or just calling init_main_db safely
-    manager.jam = None 
+    manager.jam = None
     manager.init_main_db()
     return manager
 

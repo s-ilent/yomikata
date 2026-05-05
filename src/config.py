@@ -1,13 +1,14 @@
 from PyQt6.QtCore import QSettings
 
+
 class ConfigManager:
     """Centralized configuration manager for Yomikata."""
-    
+
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(ConfigManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance.settings = QSettings("Yomikata", "Settings")
         return cls._instance
 

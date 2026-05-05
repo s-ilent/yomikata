@@ -1,34 +1,18 @@
-import os
-import sqlite3
 
-from style import CATPPUCCIN_MOCHA as CAT
-from database import (
-    create_fts_index, import_dictionary_file, export_personal_dict, 
-    import_personal_dict, import_yomitan_zip
-)
-
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSignal as QtSignal
-from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QPainter
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import pyqtSignal as QtSignal
+from PyQt6.QtGui import QCursor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QFileDialog,
-    QFormLayout,
     QFrame,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QListWidget,
-    QProgressBar,
-    QPushButton,
-    QSlider,
     QStyle,
     QStyleOption,
-    QTabWidget,
-    QTextEdit,
     QVBoxLayout,
-    QWidget,
 )
+
+from database import import_dictionary_file, import_yomitan_zip
+from style import CATPPUCCIN_MOCHA as CAT
+
 
 class ImportWorker(QThread):
     progress = QtSignal(int)
@@ -62,7 +46,7 @@ class ImportWorker(QThread):
                     lambda p: self.progress.emit(p % 101), # Simple progress for now
                     debug_cb
                 )
-            
+
             self.finished.emit(count)
             # Send debug logs to parent if possible
             if self.parent() and hasattr(self.parent(), "debug_logs"):
@@ -116,11 +100,11 @@ class TokenWidget(QFrame):
         f_romaji = QFont(); f_romaji.setPixelSize(10)
         f_kana = QFont(); f_kana.setPixelSize(12); f_kana.setBold(True)
         f_surface = QFont(); f_surface.setPixelSize(20); f_surface.setWeight(QFont.Weight.Medium)
-        
+
         w_romaji = QFontMetrics(f_romaji).horizontalAdvance(token_data["romaji"])
         w_kana = QFontMetrics(f_kana).horizontalAdvance(token_data["kana"])
         w_surface = QFontMetrics(f_surface).horizontalAdvance(token_data["surface"])
-        
+
         # Reduced padding (total horizontal padding: 8px)
         width = max(w_romaji, w_kana, w_surface) + 8
         self.setFixedWidth(max(20, width))

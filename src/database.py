@@ -1,17 +1,14 @@
-import os
-import re
 import ast
 import json
+import logging
+import os
+import re
 import sqlite3
-from pathlib import Path
 
-import fugashi
-from jamdict import Jamdict
 import jamdict_data
+from jamdict import Jamdict
 
 from yomitan_parser import _flatten_content
-
-import logging
 
 # Configure logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -31,7 +28,7 @@ class DatabaseManager:
     def get_conn(self, db_path=None):
         if db_path is None:
             db_path = self.main_db
-        
+
         # Return cached connection if available
         if db_path in self._conn_cache:
             conn = self._conn_cache[db_path]
@@ -42,7 +39,7 @@ class DatabaseManager:
             except Exception as e:
                 logger.warning(f"Connection to {db_path} dead, removing from cache: {e}")
                 del self._conn_cache[db_path]
-        
+
         logger.info(f"Creating new database connection: {db_path}")
         # Create new connection with sqlite-zstd
         try:
@@ -140,17 +137,17 @@ class DatabaseManager:
     def save_personal_note(self, word, definition):
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
-        
+
         # Get old definition to properly delete from FTS index
         old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
         if old_res:
             cursor.execute("INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],))
-        
+
         cursor.execute(
             "INSERT OR REPLACE INTO personal_dict VALUES (?, ?)",
             (word, definition)
         )
-        
+
         # Insert new entry into FTS
         cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
         conn.commit()
@@ -165,22 +162,20 @@ class DatabaseManager:
 
     def save_history(self, text: str, max_entries: int = 50):
         """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
-        import re
-        from PyQt6.QtCore import QDateTime
-        
+
         if not text.strip():
             return
-            
+
         normalized = re.sub(r'\s+', ' ', text.strip())
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
-        
+
         # Check if already exists in history
         exists = cursor.execute(
-            "SELECT id FROM history WHERE normalized_text = ?", 
+            "SELECT id FROM history WHERE normalized_text = ?",
             (normalized,)
         ).fetchone()
-        
+
         if exists:
             # Update timestamp
             cursor.execute(
@@ -193,7 +188,7 @@ class DatabaseManager:
                 "INSERT INTO history (text, normalized_text) VALUES (?, ?)",
                 (text, normalized)
             )
-            
+
         # Enforce limit
         cursor.execute("""
             DELETE FROM history WHERE id NOT IN (
@@ -274,10 +269,10 @@ class DatabaseManager:
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
-            
+
             db_name = os.path.basename(path)
             conn = self.get_conn(path)
-            
+
             # Try to search 'dictionary_entries' (rich) table
             has_rich = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'"
@@ -331,7 +326,7 @@ class DatabaseManager:
     def search_definitions(self, query, extra_paths=None):
         """Search for query inside definitions using FTS5."""
         results = []
-        
+
         # Sanitize query for FTS5
         sanitized_query = query.replace('"', '""')
         if not sanitized_query:
@@ -344,10 +339,10 @@ class DatabaseManager:
         for path in set(search_paths):
             if not os.path.exists(path):
                 continue
-            
+
             db_name = os.path.basename(path)
             conn = self.get_conn(path)
-            
+
             try:
                 # 1. Search Personal Notes FTS if it exists
                 if path == self.main_db:
@@ -362,13 +357,13 @@ class DatabaseManager:
                                WHERE f.definition MATCH ? ORDER BY rank LIMIT 5""",
                             (sanitized_query,)
                         ).fetchall()
-                        
+
                         if not res and use_like_fallback:
                             res = conn.execute(
                                 "SELECT headword, definition FROM personal_dict WHERE definition LIKE ? LIMIT 5",
                                 (f"%{query}%",)
                             ).fetchall()
-                            
+
                         for headword, definition in res:
                             results.append(f"### 📝 Personal Note (search: {headword})\n{definition}")
 
@@ -384,17 +379,17 @@ class DatabaseManager:
                            WHERE f.definition MATCH ? ORDER BY rank LIMIT 10""",
                         (sanitized_query,)
                     ).fetchall()
-                    
+
                     if not res and use_like_fallback:
                         res = conn.execute(
                             "SELECT headword, definition FROM dictionary WHERE definition LIKE ? LIMIT 10",
                             (f"%{query}%",)
                         ).fetchall()
-                    
+
                     if res:
                         for headword, definition in res:
                             results.append(f"### 📖 {db_name} (search: {headword})\n{definition}")
-                
+
                 # 3. Search rich dictionary entries FTS
                 rich_fts_exists = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries_fts'"
@@ -411,7 +406,7 @@ class DatabaseManager:
                         for h, r, g in res:
                             results.append(f"### 📖 {db_name} (search: {h} [{r}])\n{g}")
 
-            except Exception as e:
+            except Exception:
                 # Fallback to LIKE
                 try:
                     res = conn.execute(
@@ -537,11 +532,11 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None, 
 
     # Detect encoding
     try:
-        f = open(source_path, "r", encoding="utf-8")
+        f = open(source_path, encoding="utf-8")
         f.readline()
         f.seek(0)
     except UnicodeDecodeError:
-        f = open(source_path, "r", encoding="cp932")
+        f = open(source_path, encoding="cp932")
 
     entries = []
     total = 0
@@ -606,12 +601,12 @@ def import_personal_dict(input_path, format=None):
 
     if format == "json":
         import json
-        with open(input_path, "r", encoding="utf-8") as f:
+        with open(input_path, encoding="utf-8") as f:
             data = json.load(f)
         entries = [(item["headword"], item["definition"]) for item in data]
     else:  # csv
         import csv
-        with open(input_path, "r", encoding="utf-8", newline="") as f:
+        with open(input_path, encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             entries = [(row["headword"], row["definition"]) for row in reader]
 
@@ -666,7 +661,7 @@ def import_yomitan_zip(zip_path: str, db_path: str, progress_callback=None) -> i
         conn.commit()
         if progress_callback:
             progress_callback(min(i + batch_size, total), total)
-    
+
     conn.close()
     create_fts_index(db_path)
     return total

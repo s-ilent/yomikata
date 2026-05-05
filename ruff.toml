@@ -8,7 +8,7 @@ target-version = "py313"
 extend-include = ["*.py"]
 
 # Set line length to avoid overly complex lines, consistent with readability focus
-line-length = 88
+line-length = 120
 
 [lint]
 # Enable standard rule sets based on STYLE.md preferences

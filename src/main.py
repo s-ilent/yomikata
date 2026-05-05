@@ -6,11 +6,10 @@ import sys
 import markdown
 import qtawesome as qta
 from PyQt6.QtCore import QDateTime, Qt
-from PyQt6.QtGui import QFontDatabase, QKeyEvent
+from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,

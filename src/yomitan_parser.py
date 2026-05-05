@@ -1,7 +1,8 @@
 """Yomitan dictionary parser for ZIP format."""
 import json
 import zipfile
-from typing import Generator, Dict, Any
+from collections.abc import Generator
+from typing import Any
 
 
 def _flatten_content(data, indent=0) -> str:
@@ -149,7 +150,7 @@ def _extract_forms(content) -> str:
 
     return " | ".join(form_rows) if form_rows else ""
 
-def parse_yomitan_zip(zip_path: str) -> Generator[Dict[str, Any], None, None]:
+def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
     """Parse Yomitan ZIP file and yield dictionary entries.
     
     Yields dicts with keys: headword, reading, pos, pitch_accent, glossary, priority
@@ -157,17 +158,17 @@ def parse_yomitan_zip(zip_path: str) -> Generator[Dict[str, Any], None, None]:
     with zipfile.ZipFile(zip_path, 'r') as z:
         # Find all term_bank_*.json files
         term_files = sorted([f for f in z.namelist() if 'term_bank' in f and f.endswith('.json')])
-        
+
         for f_name in term_files:
             with z.open(f_name) as f:
                 data = json.load(f)
                 for item in data:
                     # Yomitan schema:
-                    # 0: kanji, 1: reading, 2: pos_tags, 3: rules, 4: score, 
+                    # 0: kanji, 1: reading, 2: pos_tags, 3: rules, 4: score,
                     # 5: definitions, 6: sequence, 7: tags
                     headword = item[0]
                     reading = item[1] if len(item) > 1 else ""
-                    
+
                     # Convert pos_tags list to string
                     pos = ""
                     if len(item) > 2 and item[2]:
@@ -175,7 +176,7 @@ def parse_yomitan_zip(zip_path: str) -> Generator[Dict[str, Any], None, None]:
                             pos = ", ".join(item[2])
                         else:
                             pos = str(item[2])
-                    
+
                     # Handle definitions (can be list, string, or structured-content dict)
                     glossary = ""
                     if len(item) > 5 and item[5]:
@@ -186,9 +187,9 @@ def parse_yomitan_zip(zip_path: str) -> Generator[Dict[str, Any], None, None]:
                             glossary = _flatten_content(defs)
                         else:
                             glossary = str(defs)
-                    
+
                     priority = item[4] if len(item) > 4 else 0
-                    
+
                     yield {
                         'headword': headword,
                         'reading': reading,

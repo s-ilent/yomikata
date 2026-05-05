@@ -1,9 +1,17 @@
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QScrollArea, QWidget, QFrame, 
-    QLabel, QHBoxLayout, QPushButton
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
+
 from style import CATPPUCCIN_MOCHA as CAT
+
 
 class HistoryDialog(QDialog):
     text_selected = pyqtSignal(str)
@@ -13,7 +21,7 @@ class HistoryDialog(QDialog):
         self.setWindowTitle("Text History")
         self.resize(700, 500)
         self.font_size = font_size
-        
+
         # Apply catppuccin styling
         self.setStyleSheet(f"""
             QDialog {{
@@ -82,7 +90,7 @@ class HistoryDialog(QDialog):
                 card_layout.addWidget(text_label)
 
                 cards_layout.insertWidget(cards_layout.count() - 1, card)
-                
+
                 # Use a proper signal emission for clicks
                 card.mousePressEvent = lambda event, t=text: self.on_card_clicked(t)
 

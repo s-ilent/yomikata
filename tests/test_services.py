@@ -1,5 +1,5 @@
-import pytest
 from services.dictionary_service import DictionaryService
+
 
 def test_dictionary_service_lookup(db_manager, mock_config):
     """Verify dictionary lookup coordination."""

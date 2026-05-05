@@ -1,7 +1,9 @@
 import ollama
-from PyQt6.QtCore import QThread, pyqtSignal
-from config import ConfigManager
 from openai import OpenAI
+from PyQt6.QtCore import QThread, pyqtSignal
+
+from config import ConfigManager
+
 
 class AIWorker(QThread):
     finished = pyqtSignal(str)

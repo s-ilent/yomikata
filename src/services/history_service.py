@@ -1,5 +1,5 @@
-from typing import List, Optional, Dict
 from database import DatabaseManager
+
 
 class HistoryService:
     def __init__(self, db_manager: DatabaseManager):
@@ -13,7 +13,7 @@ class HistoryService:
             return
         self.db_manager.save_history(text, max_entries)
 
-    def get_history(self, limit: int = 50) -> List[Dict]:
+    def get_history(self, limit: int = 50) -> list[dict]:
         """
         Retrieve the most recent history entries.
         """

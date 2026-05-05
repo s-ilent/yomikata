@@ -671,7 +671,7 @@ if __name__ == "__main__":
             print(f"Error: File not found: {path}")
             sys.exit(1)
 
-        from database import import_dictionary_archive
+        from importer import import_dictionary_archive
         count = import_dictionary_archive(path, target_db)
         print(f"Done. Imported {count} entries to {target_db}")
         sys.exit(0)

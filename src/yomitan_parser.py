@@ -171,7 +171,7 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
         for f_name in files:
             with z.open(f_name) as f:
                 data = json.load(f)
-                
+
                 # Determine file type
                 is_kanji = 'kanji_bank' in f_name
                 is_meta = 'meta_bank' in f_name
@@ -188,7 +188,7 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
                                 glossary = str(payload.get('frequency') or payload.get('displayValue') or "")
                             else:
                                 glossary = str(payload)
-                        
+
                         entry = {
                             'headword': headword,
                             'reading': "",
@@ -202,16 +202,16 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
                     elif is_kanji:
                         # Kanji bank schema: 0: kanji, 1: onyomi, 2: kunyomi, 3: tags, 4: meanings, 5: stats
                         headword = item[0]
-                        reading = "" 
+                        reading = ""
                         pos = ", ".join(item[2]) if len(item) > 2 and isinstance(item[2], list) else str(item[2] if len(item) > 2 else "")
                         glossary = ""
                         if len(item) > 4 and item[4]:
                             glossary = " / ".join([_flatten_content(d) for d in item[4]]) if isinstance(item[4], list) else _flatten_content(item[4])
-                        
+
                         priority = 0
                         if len(item) > 5 and isinstance(item[5], dict):
                             priority = item[5].get('priority', 0)
-                            
+
                         entry = {
                             'headword': headword,
                             'reading': reading,

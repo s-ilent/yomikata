@@ -38,7 +38,7 @@ def _format_card_content(content: str) -> str:
     # Break before patterns like "1)" after Japanese characters
     content = re.sub(r'([一-龥あ-んァ-ン])(\))', r'\1\n\2', content)
 
-    # Break on "1." "2." patterns in definitions  
+    # Break on "1." "2." patterns in definitions
     content = re.sub(r'(\d+)\.\s+', r'\n\1. ', content)
 
     # Clean up multiple newlines to double-newlines for paragraph separation

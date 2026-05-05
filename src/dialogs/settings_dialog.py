@@ -241,41 +241,37 @@ class SettingsDialog(QDialog):
         import_page_layout.addStretch()
         self.stack.addWidget(import_page)
 
-        # --- PAGE 5: Personal Data (Export + Import) ---
-        personal_page = QWidget()
-        personal_layout = QVBoxLayout(personal_page)
-        personal_layout.setContentsMargins(20, 20, 20, 20)
-        personal_layout.setSpacing(16)
+        # --- PAGE 5: Personal Notes ---
+        notes_page = QWidget()
+        notes_layout = QVBoxLayout(notes_page)
+        notes_layout.setContentsMargins(20, 20, 20, 20)
+        notes_layout.setSpacing(16)
 
-        # Export section
-        export_section = QGroupBox("Export Personal Dictionary")
-        export_section_layout = QVBoxLayout(export_section)
-        exp_fmt_row = QHBoxLayout()
-        exp_fmt_row.addWidget(QLabel("Format:"))
-        self.export_format = QComboBox()
-        self.export_format.addItems(["JSON", "CSV"])
-        exp_fmt_row.addWidget(self.export_format)
-        export_section_layout.addLayout(exp_fmt_row)
+        notes_section = QGroupBox("Personal Notes")
+        notes_section_layout = QVBoxLayout(notes_section)
 
-        self.export_status = QLabel("")
-        export_btn = QPushButton("Export to File...")
-        export_btn.clicked.connect(self.export_personal_dict_handler)
-        export_section_layout.addWidget(self.export_status)
-        export_section_layout.addWidget(export_btn)
-        personal_layout.addWidget(export_section)
+        self.notes_list = QListWidget()
+        self.notes_list.itemClicked.connect(self.load_note_to_editor)
+        notes_section_layout.addWidget(self.notes_list)
 
-        # Import section
-        import_personal_section = QGroupBox("Import Personal Dictionary")
-        import_personal_section_layout = QVBoxLayout(import_personal_section)
-        self.import_personal_status = QLabel("")
-        import_personal_btn = QPushButton("Import from File...")
-        import_personal_btn.clicked.connect(self.import_personal_dict_handler)
-        import_personal_section_layout.addWidget(self.import_personal_status)
-        import_personal_section_layout.addWidget(import_personal_btn)
-        personal_layout.addWidget(import_personal_section)
+        self.note_editor = QTextEdit()
+        notes_section_layout.addWidget(QLabel("Definition:"))
+        notes_section_layout.addWidget(self.note_editor)
 
-        personal_layout.addStretch()
-        self.stack.addWidget(personal_page)
+        btn_row = QHBoxLayout()
+        save_note_btn = QPushButton("Save Note")
+        save_note_btn.clicked.connect(self.save_note_handler)
+        delete_note_btn = QPushButton("Delete Note")
+        delete_note_btn.clicked.connect(self.delete_note_handler)
+        btn_row.addWidget(save_note_btn)
+        btn_row.addWidget(delete_note_btn)
+        notes_section_layout.addLayout(btn_row)
+
+        notes_layout.addWidget(notes_section)
+        self.stack.addWidget(notes_page)
+
+        # Refresh notes list
+        self.refresh_notes_list()
 
         # --- PAGE 5: Debug Logs ---
         debug_page = QWidget()
@@ -330,6 +326,51 @@ class SettingsDialog(QDialog):
         self.dict_list.clear()
         dicts = self.config.extra_dictionaries
         self.dict_list.addItems(dicts)
+
+    def refresh_notes_list(self):
+        self.notes_list.clear()
+        conn = sqlite3.connect("yomikata.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT headword FROM personal_dict")
+        rows = cursor.fetchall()
+        for row in rows:
+            self.notes_list.addItem(row[0])
+        conn.close()
+
+    def load_note_to_editor(self, item):
+        word = item.text()
+        conn = sqlite3.connect("yomikata.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,))
+        res = cursor.fetchone()
+        if res:
+            self.note_editor.setPlainText(res[0])
+        conn.close()
+
+    def save_note_handler(self):
+        item = self.notes_list.currentItem()
+        if not item:
+            return
+        word = item.text()
+        definition = self.note_editor.toPlainText()
+
+        from database import _get_db
+        _get_db().save_personal_note(word, definition)
+        QMessageBox.information(self, "Success", "Note saved.")
+
+    def delete_note_handler(self):
+        item = self.notes_list.currentItem()
+        if not item:
+            return
+        word = item.text()
+        conn = sqlite3.connect("yomikata.db")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM personal_dict WHERE headword = ?", (word,))
+        conn.commit()
+        conn.close()
+        self.refresh_notes_list()
+        self.note_editor.clear()
+        QMessageBox.information(self, "Deleted", "Note deleted.")
 
     def add_dictionary(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open Dictionary", "", "SQLite DB (*.db)")

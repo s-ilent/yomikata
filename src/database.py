@@ -16,16 +16,16 @@ logger = logging.getLogger("yomikata.database")
 
 
 class DatabaseManager:
-    def __init__(self, main_db="yomikata.db"):
+    def __init__(self, main_db: str = "yomikata.db") -> None:
         self.main_db = main_db
-        self._conn_cache = {}  # Cache open connections
+        self._conn_cache: dict[str, sqlite3.Connection] = {}  # Cache open connections
         # Initialize jamdict for JMDict lookups
         # Use jamdict-data pre-built database
         db_path = os.path.join(os.path.dirname(jamdict_data.__file__), 'jamdict.db')
         self.jam = Jamdict(db_path=db_path)
         self.init_main_db()
 
-    def get_conn(self, db_path=None):
+    def get_conn(self, db_path: str | None = None) -> sqlite3.Connection:
         if db_path is None:
             db_path = self.main_db
 
@@ -57,18 +57,18 @@ class DatabaseManager:
             logger.error(f"Failed to connect to {db_path}: {e}")
             raise
 
-    def close_all(self):
+    def close_all(self) -> None:
         """Close all cached connections."""
         for conn in self._conn_cache.values():
             conn.close()
         self._conn_cache.clear()
 
-    def _execute(self, conn, query, params=()):
+    def _execute(self, conn: sqlite3.Connection, query: str, params: tuple = ()) -> None:
         """Execute a query and commit immediately."""
         conn.execute(query, params)
         conn.commit()
 
-    def init_main_db(self):
+    def init_main_db(self) -> None:
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
         # Personal notes
@@ -134,7 +134,7 @@ class DatabaseManager:
         """)
         conn.commit()
 
-    def save_personal_note(self, word, definition):
+    def save_personal_note(self, word: str, definition: str) -> None:
         conn = self.get_conn(self.main_db)
         cursor = conn.cursor()
 
@@ -152,15 +152,15 @@ class DatabaseManager:
         cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
         conn.commit()
 
-    def get_personal_note(self, word):
+    def get_personal_note(self, word: str) -> str | None:
         conn = self.get_conn(self.main_db)
         res = conn.execute(
             "SELECT definition FROM personal_dict WHERE headword = ?",
-            (word,)
+            (word,),
         ).fetchone()
         return res[0] if res else None
 
-    def save_history(self, text: str, max_entries: int = 50):
+    def save_history(self, text: str, max_entries: int = 50) -> None:
         """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
 
         if not text.strip():
@@ -197,21 +197,22 @@ class DatabaseManager:
         """, (max_entries,))
         conn.commit()
 
-    def get_history(self, limit: int = 50):
+    def get_history(self, limit: int = 50) -> list[tuple[str, str]]:
         conn = self.get_conn(self.main_db)
         res = conn.execute(
             "SELECT text, timestamp FROM history ORDER BY timestamp DESC LIMIT ?",
-            (limit,)
+            (limit,),
         ).fetchall()
-        return res
+        # Cast to list[tuple[str, str]] to satisfy mypy
+        return [(str(row[0]), str(row[1])) for row in res]
 
-    def get_inflected_forms(self, word):
+    def get_inflected_forms(self, word: str) -> list[str]:
         """Use fugashi/MeCab to guess potential lemma/inflected forms."""
         # Simple implementation for now - just returns a list with the word itself
         # In a real app, this would use fugashi to get dictionary forms
         return [word]
 
-    def lookup_jmdict(self, word):
+    def lookup_jmdict(self, word: str) -> str | None:
         """Look up word in JMDict via jamdict and return formatted string."""
         try:
             # Check if jamdict is properly initialized
@@ -240,8 +241,8 @@ class DatabaseManager:
             print(f"JMDict lookup error: {e}")
             return None
 
-    def lookup(self, word, lemma, extra_paths=None):
-        results = []
+    def lookup(self, word: str, lemma: str, extra_paths: list[str] | None = None) -> str:
+        results: list[str] = []
 
         # 1. Personal Note
         note = self.get_personal_note(word) or self.get_personal_note(lemma)
@@ -323,9 +324,9 @@ class DatabaseManager:
 
         return "\n\n---\n\n".join(results)
 
-    def search_definitions(self, query, extra_paths=None):
+    def search_definitions(self, query: str, extra_paths: list[str] | None = None) -> str:
         """Search for query inside definitions using FTS5."""
-        results = []
+        results: list[str] = []
 
         # Sanitize query for FTS5
         sanitized_query = query.replace('"', '""')
@@ -422,11 +423,11 @@ class DatabaseManager:
         return "\n\n---\n\n".join(results)
 
 # Standalone helper functions
-def create_fts_index(db_path):
+def create_fts_index(db_path: str) -> int:
     """Create or rebuild FTS5 index for an existing dictionary using external content."""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    total_count = 0
+    total_count: int = 0
 
     # Handle dictionary_entries table (Yomitan/JMDict)
     if cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries'").fetchone():
@@ -502,9 +503,16 @@ def create_fts_index(db_path):
     return total_count
 
 
-def import_dictionary_file(source_path, target_db_path, progress_callback=None, debug_callback=None):
+from typing import Callable
+
+def import_dictionary_file(
+    source_path: str,
+    target_db_path: str,
+    progress_callback: Callable[[int], None] | None = None,
+    debug_callback: Callable[[str], None] | None = None,
+) -> int:
     """Import entries from an Eijiro-style text file into a SQLite database."""
-    def log(msg):
+    def log(msg: str) -> None:
         if debug_callback:
             debug_callback(msg)
 
@@ -569,7 +577,7 @@ def import_dictionary_file(source_path, target_db_path, progress_callback=None, 
     return total
 
 
-def export_personal_dict(output_path, format="json"):
+def export_personal_dict(output_path: str, format: str = "json") -> int:
     """Export personal_dict table to JSON or CSV."""
     conn = sqlite3.connect("yomikata.db")
     cursor = conn.cursor()
@@ -591,7 +599,7 @@ def export_personal_dict(output_path, format="json"):
     return len(rows)
 
 
-def import_personal_dict(input_path, format=None):
+def import_personal_dict(input_path: str, format: str | None = None) -> int:
     """Import personal_dict from a JSON or CSV file."""
     if format is None:
         format = os.path.splitext(input_path)[1].lower().lstrip(".")
@@ -615,7 +623,13 @@ def import_personal_dict(input_path, format=None):
     conn.close()
     return len(entries)
 
-def import_yomitan_zip(zip_path: str, db_path: str, progress_callback=None) -> int:
+from typing import Callable
+
+def import_yomitan_zip(
+    zip_path: str,
+    db_path: str,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> int:
     """Import Yomitan ZIP into the database."""
     from yomitan_parser import parse_yomitan_zip
     entries = list(parse_yomitan_zip(zip_path))
@@ -669,36 +683,36 @@ def import_yomitan_zip(zip_path: str, db_path: str, progress_callback=None) -> i
 # Global instance for backward compatibility
 _db = None
 
-def _get_db():
+def _get_db() -> DatabaseManager:
     global _db
     if _db is None:
         _db = DatabaseManager()
     return _db
 
-def init_db():
+def init_db() -> None:
     """Initialize the database (creates tables if needed)."""
     _get_db().init_main_db()
 
-def lookup_word(word, lemma, extra_dicts=None):
+def lookup_word(word: str, lemma: str, extra_dicts: list[str] | None = None) -> str:
     """Backward-compatible lookup function."""
     return _get_db().lookup(word, lemma, extra_dicts)
 
-def save_to_personal_dict(word, definition):
+def save_to_personal_dict(word: str, definition: str) -> None:
     """Backward-compatible save function."""
     _get_db().save_personal_note(word, definition)
 
-def get_personal_note(word):
+def get_personal_note(word: str) -> str | None:
     """Get a personal note for a word."""
     return _get_db().get_personal_note(word)
 
-def save_history(text: str, max_entries: int = 50):
+def save_history(text: str, max_entries: int = 50) -> None:
     """Backward-compatible save history function."""
     _get_db().save_history(text, max_entries)
 
-def get_history(limit: int = 50):
+def get_history(limit: int = 50) -> list[tuple[str, str]]:
     """Backward-compatible get history function."""
     return _get_db().get_history(limit)
 
-def search_definitions(query, extra_dicts=None):
+def search_definitions(query: str, extra_dicts: list[str] | None = None) -> str:
     """Search for query inside definitions using FTS5."""
     return _get_db().search_definitions(query, extra_dicts)

@@ -39,5 +39,5 @@ module = ["database", "services.*", "processor"]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["jamdict.*", "fugashi.*", "jamdict_data.*", "qtawesome.*"]
+module = ["jamdict.*", "fugashi.*", "jamdict_data.*", "qtawesome.*", "sqlite_zstd.*"]
 ignore_missing_imports = true

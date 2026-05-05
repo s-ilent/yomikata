@@ -17,7 +17,7 @@ class DictionaryService:
         """
         return self.db_manager.search_definitions(query, extra_paths)
 
-    def save_personal_note(self, word: str, definition: str):
+    def save_personal_note(self, word: str, definition: str) -> None:
         """
         Save or update a personal note for a word.
         """
@@ -27,4 +27,5 @@ class DictionaryService:
         """
         Retrieve a personal note for a word.
         """
-        return self.db_manager.get_personal_note(word)
+        note = self.db_manager.get_personal_note(word)
+        return str(note) if note else None

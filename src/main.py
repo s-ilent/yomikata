@@ -274,7 +274,7 @@ class YomikataApp(QMainWindow):
         return super().eventFilter(obj, event)
 
     def format_definition(self, text):
-        """Adds line breaks before special symbols ●, ◆, ■, ①, ②, etc., and numbering like 1."""
+        """Adds line breaks before special symbols and formats definitions nicely."""
         if not text:
             return ""
         # Convert single newlines to double to preserve line breaks in markdown
@@ -282,26 +282,47 @@ class YomikataApp(QMainWindow):
         # Also handle double-width spaces
         text = text.replace("　", " ")
 
-        # Format patterns in the DEFINITIONS section (after ---)
-        parts = text.split("---")
-        if len(parts) > 1:
-            header = parts[0] + "---"
-            definitions = "---".join(parts[1:])
-        else:
-            header = ""
-            definitions = text
+        # Split into individual dictionary entries (separated by ### 📖)
+        entries = re.split(r'(### 📖)', text)
 
-        # Apply formatting only to definitions part (after ---)
-        # Break before our custom sense markers ◆X anywhere they appear
-        definitions = re.sub(r"(◆[①②③④⑤⑥⑦⑧⑨⑩])", r"\n\n\1", definitions)
+        formatted_entries = []
+        current_entry = ""
+
+        for i, part in enumerate(entries):
+            if not part.strip():
+                continue
+            if part == "### 📖":
+                # Save previous entry
+                if current_entry:
+                    formatted_entries.append(self._format_single_entry(current_entry))
+                current_entry = "### 📖"
+                continue
+            current_entry += part
+
+        # Add last entry
+        if current_entry:
+            formatted_entries.append(self._format_single_entry(current_entry))
+
+        return "\n\n".join(formatted_entries)
+
+    def _format_single_entry(self, text):
+        """Format a single dictionary entry with better spacing and structure."""
+        # Add double break before our custom sense markers ◆X anywhere they appear
+        text = re.sub(r"(◆[①②③④⑤⑥⑦⑧⑨⑩])", r"\n\n\1", text)
         # Break before bracketed numbers (e.g., 【1】 or (1))
-        definitions = re.sub(r"([（\(【]\d+[】\)\)])", r"\n\n\1", definitions)
-        # Break before numbered Japanese patterns like "1 〔...〕"
-        definitions = re.sub(r"(\d+\s+〔)", r"\n\n\1", definitions)
+        text = re.sub(r"([（\(【]\d+[】\)])", r"\n\n\1", text)
+        # Break before numbered Japanese patterns like "1 〔...〕" or "1〔...〕"
+        text = re.sub(r"(\d+\s*〔)", r"\n\n\1", text)
         # Break before patterns like "1)" after Japanese characters
-        definitions = re.sub(r"([一-龥あ-んァ-ン])(\))", r"\1\n\n\2", definitions)
+        text = re.sub(r"([一-龥あ-んァ-ン])(\))", r"\1\n\n\2", text)
+        # Also break on "1." "2." patterns in definitions
+        text = re.sub(r"(\d+)\.\s+", r"\n\n\1. ", text)
+        # Handle patterns like "1 言語" (number + space + Japanese)
+        text = re.sub(r"(\n\d+\s+〔.+?\.)(\s*)(\d+\s+〔)", r"\1\n\n\3", text)
 
-        text = header + definitions if header else definitions
+        # Clean up multiple line breaks
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
         return text
 
     def analyze_text(self):
@@ -488,13 +509,49 @@ class YomikataApp(QMainWindow):
     def apply_custom_css(self, html):
         return f"""
         <style>
-            body {{ font-family: 'Shippori Mincho', serif; color: {CAT["foreground"]}; }}
-            h1 {{ color: {CAT["blue"]}; font-size: 28px; margin-bottom: 0; }}
-            h3 {{ color: {CAT["mauve"]}; border-bottom: 1px solid {CAT["surface_hover"]}; padding-bottom: 5px; }}
-            code {{ background-color: {CAT["surface"]}; color: {CAT["mauve"]}; padding: 2px 4px; border-radius: 4px; }}
-            strong {{ color: {CAT["foreground"]}; }}
-            hr {{ border: 0; border-top: 1px solid {CAT["surface_hover"]}; }}
+            body {{ font-family: 'Shippori Mincho', 'Noto Serif JP', serif; color: {CAT["foreground"]}; line-height: 1.6; }}
+            h1 {{ color: {CAT["blue"]}; font-size: 24px; margin: 0 0 8px 0; font-weight: 600; letter-spacing: 0.05em; }}
+            h2 {{ color: {CAT["mauve"]}; font-size: 16px; margin: 16px 0 4px 0; border-bottom: 1px solid {CAT["surface_hover"]}; padding-bottom: 4px; }}
+            h3 {{ color: {CAT["cyan"]}; font-size: 14px; margin: 12px 0 4px 0; font-weight: 500; }}
+            code {{ background-color: {CAT["surface"]}; color: {CAT["mauve"]}; padding: 2px 6px; border-radius: 3px; font-size: 0.95em; }}
+            strong {{ color: {CAT["foreground"]}; font-weight: 600; }}
+            hr {{ border: 0; border-top: 1px solid {CAT["surface_hover"]}; margin: 12px 0; }}
             a {{ color: {CAT["blue"]}; }}
+            p {{ margin: 6px 0; }}
+            ul, ol {{ margin: 4px 0; padding-left: 20px; }}
+            li {{ margin: 2px 0; }}
+            blockquote {{
+                border-left: 3px solid {CAT["mauve"]};
+                margin: 8px 0;
+                padding-left: 12px;
+                color: {CAT["comment"]};
+            }}
+            .pos-badge {{
+                display: inline-block;
+                background: {CAT["surface"]};
+                color: {CAT["cyan"]};
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-family: sans-serif;
+                margin-right: 6px;
+            }}
+            .dict-entry {{
+                background: {CAT["surface"]};
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin: 8px 0;
+            }}
+            .dict-header {{
+                display: flex;
+                align-items: center;
+                margin-bottom: 8px;
+            }}
+            .dict-source {{
+                font-size: 11px;
+                color: {CAT["comment"]};
+                margin-left: auto;
+            }}
         </style>
         {html}
         """

@@ -9,7 +9,15 @@ wheels/
 # Virtual environments
 .venv
 
-# Etcetera
-.serena/
+# Local data
 yomikata.db
 data/
+docs/
+logs/
+*_cache
+
+# LLM gunk
+.serena/
+.superpowers/
+.claude/
+.gemini/

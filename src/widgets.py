@@ -149,7 +149,8 @@ class DictionaryCardStack(QFrame):
 class BaseDictionaryCard(QFrame):
     """Base class for dictionary cards with consistent styling."""
 
-    def __init__(self, source_label: str, content: str, accent_color: str, parent=None):
+    def __init__(self, source_label: str, content, accent_color: str, parent=None):
+        # content can be: dict, list, or str
         super().__init__(parent)
         self.setStyleSheet(f"""
             QFrame {{
@@ -179,21 +180,97 @@ class BaseDictionaryCard(QFrame):
         """)
         layout.addWidget(label)
 
-        # Content - use QLabel with Markdown support
-        content_label = QLabel(content if content else "No definitions")
-        content_label.setObjectName("Content")
-        content_label.setTextFormat(Qt.TextFormat.MarkdownText)
-        content_label.setStyleSheet(f"""
-            QLabel#Content {{
+        # Parse content and build native widgets
+        if content is None:
+            content = "No definitions"
+
+        if isinstance(content, dict):
+            self._parse_dict_content(content, layout)
+        elif isinstance(content, list):
+            self._parse_list_content(content, layout)
+        elif isinstance(content, str):
+            self._parse_str_content(content, layout)
+        else:
+            lbl = QLabel(str(content))
+            self._style_content_label(lbl)
+            layout.addWidget(lbl)
+
+    def _style_content_label(self, label):
+        """Apply common styling to content labels."""
+        label.setStyleSheet(f"""
+            QLabel {{
                 background: transparent;
                 font-size: 14px;
                 color: {CAT['foreground']};
             }}
         """)
-        content_label.setWordWrap(True)
-        content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
-        content_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-        layout.addWidget(content_label)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+
+    def _parse_dict_content(self, data, layout):
+        """Parse Yomitan structured-content dict and build widgets."""
+        # Handle Yomitan structure: type="structured-content" with content=[]
+        if data.get("type") == "structured-content":
+            content_list = data.get("content", [])
+            self._parse_list_content(content_list, layout)
+            return
+
+        # Handle glossary list style (numbered senses)
+        style = data.get("style", {})
+        list_style = style.get("listStyleType", "")
+        if list_style.startswith('"'):
+            number = list_style.strip('"').strip()
+            # Find glossary content
+            content = data.get("content", [])
+            for item in content:
+                if isinstance(item, dict) and item.get("data", {}).get("content") == "glossary":
+                    self._add_label(f"◆{number}", layout)
+                    self._parse_dict_content(item, layout)
+                    return
+
+        # Handle glossary key
+        if "glossary" in data or "content" in data:
+            gloss = data.get("glossary") or data.get("content", [])
+            if isinstance(gloss, list):
+                for item in gloss:
+                    if isinstance(item, str):
+                        self._add_label(item, layout)
+                    elif isinstance(item, dict):
+                        self._parse_dict_content(item, layout)
+
+        # Generic: iterate through dict values
+        for key, value in data.items():
+            if key in ("type", "style", "data"):
+                continue
+            if isinstance(value, str) and value.strip():
+                self._add_label(value, layout)
+            elif isinstance(value, list):
+                self._parse_list_content(value, layout)
+            elif isinstance(value, dict):
+                self._parse_dict_content(value, layout)
+
+    def _parse_list_content(self, items, layout):
+        """Parse list content and build widgets."""
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                self._add_label(item, layout)
+            elif isinstance(item, dict):
+                self._parse_dict_content(item, layout)
+            elif isinstance(item, list):
+                self._parse_list_content(item, layout)
+
+    def _parse_str_content(self, text, layout):
+        """Parse plain text content."""
+        for line in text.split('\n'):
+            if line.strip():
+                self._add_label(line, layout)
+
+    def _add_label(self, text, layout):
+        """Create and add a content label."""
+        lbl = QLabel(text)
+        self._style_content_label(lbl)
+        layout.addWidget(lbl)
 
 
 class WordHeaderCard(QFrame):

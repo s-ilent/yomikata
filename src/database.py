@@ -198,17 +198,16 @@ class DatabaseManager:
                                 dict_meta = None
                                 priority = row[3] if len(row) > 3 else 0
 
-                            # Parse glossary if structured
+                            # Parse glossary if structured - pass raw parsed object to cards
                             g_stripped = glossary.strip() if isinstance(glossary, str) else ""
                             if g_stripped.startswith(("{", "[", "'{")):
                                 try:
                                     parsed = json_module.loads(g_stripped)
-                                    glossary = _flatten_content(parsed)
+                                    glossary = parsed  # Keep as parsed object for cards to handle
                                 except (json_module.JSONDecodeError, TypeError, ValueError, SyntaxError):
-                                    pass  # Keep original string
+                                    pass  # Keep original string if JSON fails
 
-                            # Format the content for display
-                            glossary = _format_card_content(glossary)
+                            # Don't format here - let cards handle rendering
 
                             # Determine card type from dictionary_name
                             card_type = "yomitan"

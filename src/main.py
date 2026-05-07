@@ -203,7 +203,7 @@ class YomikataApp(QMainWindow):
         self.ai_template.setFixedHeight(40)
 
         # Main AI Button
-        self.ai_btn = QPushButton(" Ask AI Sensei")  # Added a space for icon padding
+        self.ai_btn = QPushButton(" Ask AI")  # Added a space for icon padding
         self.ai_btn.setIcon(qta.icon("fa5s.robot", color="white"))  # Robot icon!
         self.ai_btn.clicked.connect(self.ask_ai)
         self.ai_btn.setEnabled(False)
@@ -244,9 +244,7 @@ class YomikataApp(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # Indeterminate "pulser"
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet(
-            "QProgressBar::chunk { background-color: #3d5afe; }"
-        )
+        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #3d5afe; }")
         self.progress_bar.setFixedHeight(4)
 
         dict_label = QLabel("<b>DICTIONARY REVEAL</b>")
@@ -278,10 +276,7 @@ class YomikataApp(QMainWindow):
 
     def eventFilter(self, obj, event):
         if obj is self.input_area and event.type() == event.Type.KeyPress:
-            if (
-                event.key() == Qt.Key.Key_Return
-                and event.modifiers() & Qt.KeyboardModifier.ControlModifier
-            ):
+            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.analyze_text()
                 return True
         return super().eventFilter(obj, event)
@@ -296,7 +291,7 @@ class YomikataApp(QMainWindow):
         text = text.replace("　", " ")
 
         # Split into individual dictionary entries (separated by ### 📖)
-        entries = re.split(r'(### 📖)', text)
+        entries = re.split(r"(### 📖)", text)
 
         formatted_entries = []
         current_entry = ""
@@ -376,9 +371,7 @@ class YomikataApp(QMainWindow):
     def apply_settings(self, font_size, history_size):
         # Apply the new settings
         self.update_font_size(font_size)
-        self.log_debug(
-            f"Settings applied: font_size={font_size}, history_size={history_size}"
-        )
+        self.log_debug(f"Settings applied: font_size={font_size}, history_size={history_size}")
 
     def show_history(self):
         """Show history dialog with previously analyzed texts."""
@@ -411,15 +404,9 @@ class YomikataApp(QMainWindow):
         for i in range(self.matrix_layout.count()):
             widget = self.matrix_layout.itemAt(i).widget()
             if widget and isinstance(widget, TokenWidget):
-                widget.romaji_lbl.setStyleSheet(
-                    f"font-size: {romaji_size}px; color: #6272a4;"
-                )
-                widget.kana_lbl.setStyleSheet(
-                    f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;"
-                )
-                widget.surface_lbl.setStyleSheet(
-                    f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;"
-                )
+                widget.romaji_lbl.setStyleSheet(f"font-size: {romaji_size}px; color: #6272a4;")
+                widget.kana_lbl.setStyleSheet(f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;")
+                widget.surface_lbl.setStyleSheet(f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;")
 
     def save_ai_to_dict(self):
         """Modified to save the COMBINED phrase, not just one word."""
@@ -427,9 +414,7 @@ class YomikataApp(QMainWindow):
             # Join all selected surfaces (e.g. "わかっ" + "た" = "ようになった")
             combined_surface = "".join([t["surface"] for t in self.selection_list])
 
-            self.dict_service.save_personal_note(
-                combined_surface, self.last_ai_response
-            )
+            self.dict_service.save_personal_note(combined_surface, self.last_ai_response)
 
             # Show success as a card
             success_card = LegacyCard("Personal Note", f"✓ Saved '{combined_surface}' to personal dictionary!")
@@ -593,10 +578,7 @@ class YomikataApp(QMainWindow):
             return
 
         # Create details for the AI
-        details = [
-            f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})"
-            for t in self.selection_list
-        ]
+        details = [f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})" for t in self.selection_list]
         combined_text = "".join([t["surface"] for t in self.selection_list])
         context = self.input_area.toPlainText()
         pos_list = ", ".join(set([t["pos"] for t in self.selection_list]))
@@ -604,9 +586,7 @@ class YomikataApp(QMainWindow):
 
         # Get selected template
         selected_template = self.ai_template.currentText()
-        template = AI_TEMPLATES.get(
-            selected_template, AI_TEMPLATES["Grammar Breakdown"]
-        )
+        template = AI_TEMPLATES.get(selected_template, AI_TEMPLATES["Grammar Breakdown"])
 
         # Fill in template placeholders
         prompt_data = {
@@ -630,7 +610,7 @@ class YomikataApp(QMainWindow):
         self.last_ai_response = response
 
         # Display AI response as a card
-        ai_card = LegacyCard("AI Sensei", response)
+        ai_card = LegacyCard("AI Notes", response)
         self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, ai_card)
         self.save_ai_btn.setVisible(True)
 
@@ -662,9 +642,10 @@ class YomikataApp(QMainWindow):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Yomikata - Japanese Reading Assistant")
-    parser.add_argument('--lookup', '-l', metavar='WORD', help='Lookup a word and exit')
-    parser.add_argument('--import-yomitan', '-i', nargs=2, metavar=('ZIPFILE', 'TARGET.DB'),
-                       help='Import Yomitan ZIP to SQLite DB')
+    parser.add_argument("--lookup", "-l", metavar="WORD", help="Lookup a word and exit")
+    parser.add_argument(
+        "--import-yomitan", "-i", nargs=2, metavar=("ZIPFILE", "TARGET.DB"), help="Import Yomitan ZIP to SQLite DB"
+    )
     args = parser.parse_args()
 
     if args.import_yomitan:
@@ -675,6 +656,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         from importer import import_dictionary_archive
+
         count = import_dictionary_archive(path, target_db)
         print(f"Done. Imported {count} entries to {target_db}")
         sys.exit(0)

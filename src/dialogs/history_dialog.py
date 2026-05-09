@@ -46,6 +46,27 @@ class HistoryDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        # Hover/selected styling for history cards and their labels
+        # Using class/nth selectors to avoid cascading QFrame rules to child QLabels
+        self.card_style = f"""
+            QFrame#HistoryCard {{
+                background-color: {CAT["surface"]};
+                border: 1px solid {CAT["surface_hover"]};
+                border-radius: 6px;
+            }}
+            QFrame#HistoryCard:hover {{
+                border: 1px solid {CAT["selection"]};
+            }}
+            QLabel#HistoryTimestamp {{
+                color: {CAT["comment"]};
+                font-size: 11px;
+            }}
+            QLabel#HistoryText {{
+                color: {CAT["foreground"]};
+                font-size: {self.font_size}px;
+            }}
+        """
+
         # Scroll area with history cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -61,34 +82,25 @@ class HistoryDialog(QDialog):
             for entry in entries:
                 text = entry.get("text", "")
                 timestamp = entry.get("timestamp", "")
-                # Create card frame
+                # Card frame with visual hover indication
                 card = QFrame()
-                card.setFrameShape(QFrame.Shape.StyledPanel)
-                card.setStyleSheet(f"""
-                    QFrame {{
-                        background-color: {CAT["surface"]};
-                        border: 1px solid {CAT["surface_hover"]};
-                        border-radius: 6px;
-                        padding: 10px;
-                    }}
-                    QFrame:hover {{
-                        border: 1px solid {CAT["selection"]};
-                    }}
-                """)
+                card.setObjectName("HistoryCard")
+                card.setStyleSheet(self.card_style)
                 card.setCursor(Qt.CursorShape.PointingHandCursor)
 
                 card_layout = QVBoxLayout(card)
+                card_layout.setContentsMargins(10, 10, 10, 10)
 
                 # Timestamp label (smaller, muted)
                 ts_label = QLabel(str(timestamp))
-                ts_label.setStyleSheet(f"color: {CAT['comment']}; font-size: 11px;")
+                ts_label.setObjectName("HistoryTimestamp")
                 card_layout.addWidget(ts_label)
 
-                # Text content (with word wrap)
-                text_label = QLabel(text)
-                text_label.setStyleSheet(f"color: {CAT['foreground']}; font-size: {self.font_size}px;")
+                # Text preview — trimmed to keep cards compact, no text selection
+                preview = (text[:197] + "...") if len(text) > 200 else text
+                text_label = QLabel(preview)
+                text_label.setObjectName("HistoryText")
                 text_label.setWordWrap(True)
-                text_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 card_layout.addWidget(text_label)
 
                 cards_layout.insertWidget(cards_layout.count() - 1, card)

@@ -26,8 +26,9 @@ class GlossarySenseManager:
 class BaseDictionaryCard(QFrame):
     """Base class for dictionary cards with consistent styling and sense management."""
 
-    def __init__(self, source_label: str, content, accent_color: str, parent=None):
+    def __init__(self, source_label: str, content, accent_color: str, parent=None, dict_font_size: int = 14):
         super().__init__(parent)
+        self.dict_font_size = dict_font_size
         self.sense_manager = GlossarySenseManager()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -35,18 +36,20 @@ class BaseDictionaryCard(QFrame):
         self.layout = layout
 
         # Source label - styled as superscript
+        source_font_size = max(10, int(dict_font_size * 0.71))
         label = QLabel(source_label)
         label.setObjectName("SourceLabel")
         label.setStyleSheet(f"""
             QLabel#SourceLabel {{
                 background: transparent;
-                font-size: 10px;
+                font-size: {source_font_size}px;
                 font-weight: bold;
                 color: {accent_color};
                 padding: 0;
                 margin: 0;
             }}
         """)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(label)
 
         # Initial parse
@@ -70,7 +73,7 @@ class BaseDictionaryCard(QFrame):
         label.setStyleSheet(f"""
             QLabel#ContentLabel {{
                 background: transparent;
-                font-size: 14px;
+                font-size: {self.dict_font_size}px;
                 color: {CAT['foreground']};
             }}
         """)
@@ -97,8 +100,8 @@ class BaseDictionaryCard(QFrame):
 class MarkdownCard(BaseDictionaryCard):
     """Card for markdown-formatted personal notes."""
 
-    def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT['mauve'], parent)
+    def __init__(self, source_label, content, parent=None, dict_font_size=14):
+        super().__init__(source_label, content, CAT['mauve'], parent, dict_font_size=dict_font_size)
         self.setObjectName("MarkdownCard")
 
     def _style_content_label(self, label):
@@ -109,7 +112,7 @@ class MarkdownCard(BaseDictionaryCard):
 class WordHeaderCard(QFrame):
     """Header card showing word, reading, lemma, POS."""
 
-    def __init__(self, headword, reading, romaji, lemma, pos, parent=None):
+    def __init__(self, headword, reading, romaji, lemma, pos, parent=None, dict_font_size: int = 14):
         super().__init__(parent)
         self.setObjectName("WordHeaderCard")
         layout = QVBoxLayout(self)
@@ -117,31 +120,36 @@ class WordHeaderCard(QFrame):
         layout.setSpacing(4)
 
         # Headword (large, red)
+        head_size = int(dict_font_size * 1.71)
         headword_label = QLabel(headword)
         headword_label.setObjectName("Headword")
         headword_label.setStyleSheet(f"""
             QLabel#Headword {{
-                font-size: 24px;
+                font-size: {head_size}px;
                 font-weight: bold;
                 color: {CAT['red']};
             }}
         """)
+        headword_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(headword_label)
 
         # Reading (kana + romaji, cyan)
+        reading_size = int(dict_font_size * 1.14)
         reading_text = f"{reading} [{romaji}]" if romaji else reading
         reading_label = QLabel(reading_text)
         reading_label.setObjectName("Reading")
         reading_label.setStyleSheet(f"""
             QLabel#Reading {{
-                font-size: 16px;
+                font-size: {reading_size}px;
                 color: {CAT['cyan']};
             }}
         """)
+        reading_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(reading_label)
 
         # Lemma + POS (green badges)
         if lemma or pos:
+            meta_size = max(10, int(dict_font_size * 0.86))
             meta_row = QLabel()
             meta_row.setObjectName("MetaRow")
             meta_parts = []
@@ -152,20 +160,21 @@ class WordHeaderCard(QFrame):
             meta_row.setText(" | ".join(meta_parts))
             meta_row.setStyleSheet(f"""
                 QLabel#MetaRow {{
-                    font-size: 12px;
+                    font-size: {meta_size}px;
                     color: {CAT['green']};
                 }}
             """)
+            meta_row.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(meta_row)
 
 
 class YomitanCard(BaseDictionaryCard):
     """Card for Yomitan entries (mauve accent)."""
 
-    def __init__(self, source_label, content, priority=None, parent=None):
+    def __init__(self, source_label, content, priority=None, parent=None, dict_font_size=14):
         if priority and priority > 0:
             source_label = f"{source_label} ★{priority}"
-        super().__init__(source_label, content, CAT['mauve'], parent)
+        super().__init__(source_label, content, CAT['mauve'], parent, dict_font_size=dict_font_size)
         self.setObjectName("YomitanCard")
 
     def _parse_dict_content(self, data, layout):
@@ -187,7 +196,7 @@ class YomitanCard(BaseDictionaryCard):
                 lbl.setStyleSheet(f"""
                     QLabel#YomitanSense {{
                         background: transparent;
-                        font-size: 13px;
+                        font-size: {self.dict_font_size}px;
                         color: {CAT['foreground']};
                         padding: 0;
                         margin: 1px 0 1px 8px;
@@ -205,8 +214,8 @@ class YomitanCard(BaseDictionaryCard):
 class JMDictCard(BaseDictionaryCard):
     """Card for JMDict entries (blue accent)."""
 
-    def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT["blue"], parent)
+    def __init__(self, source_label, content, parent=None, dict_font_size=14):
+        super().__init__(source_label, content, CAT["blue"], parent, dict_font_size=dict_font_size)
         self.setObjectName("JMDictCard")
 
     def _parse_dict_content(self, data, layout):
@@ -223,19 +232,21 @@ class JMDictCard(BaseDictionaryCard):
 
         # Headword line
         if kanji or kana:
+            head_size = int(self.dict_font_size * 1.07)
             header_text = f"{kanji} [{kana}]" if kanji and kana else kanji or kana
             label = QLabel(header_text)
             label.setObjectName("JMDictHeadword")
             label.setStyleSheet(f"""
                 QLabel#JMDictHeadword {{
                     background: transparent;
-                    font-size: 15px;
+                    font-size: {head_size}px;
                     font-weight: bold;
                     color: {CAT['blue']};
                     padding: 0;
                     margin: 2px 0;
                 }}
             """)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(label)
 
         # Numbered senses
@@ -254,7 +265,7 @@ class JMDictCard(BaseDictionaryCard):
             label.setStyleSheet(f"""
                 QLabel#JMDictSense {{
                     background: transparent;
-                    font-size: 13px;
+                    font-size: {self.dict_font_size}px;
                     color: {CAT['foreground']};
                     padding: 0;
                     margin: 1px 0 1px 8px;
@@ -270,32 +281,34 @@ class JMDictCard(BaseDictionaryCard):
         for sense in senses:
             all_miscs.update(sense.get("misc", []))
         if len(all_miscs) == 1 and all_miscs:
+            note_size = max(10, int(self.dict_font_size * 0.79)) # 11/14 approx 0.79
             note = QLabel(f"Note: {', '.join(all_miscs)}")
             note.setObjectName("MiscNote")
             note.setStyleSheet(f"""
                 QLabel#MiscNote {{
                     background: transparent;
-                    font-size: 11px;
+                    font-size: {note_size}px;
                     color: {CAT['comment']};
                     padding: 0;
                     margin: 2px 0 0 8px;
                     font-style: italic;
                 }}
             """)
+            note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(note)
 
 
 class JMnedictCard(BaseDictionaryCard):
     """Card for JMnedict name entries (peach accent)."""
 
-    def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT["peach"], parent)
+    def __init__(self, source_label, content, parent=None, dict_font_size=14):
+        super().__init__(source_label, content, CAT["peach"], parent, dict_font_size=dict_font_size)
         self.setObjectName("JMnedictCard")
 
 
 class LegacyCard(BaseDictionaryCard):
     """Card for legacy Eijiro format."""
 
-    def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT["surface_hover"], parent)
+    def __init__(self, source_label, content, parent=None, dict_font_size=14):
+        super().__init__(source_label, content, CAT["surface_hover"], parent, dict_font_size=dict_font_size)
         self.setObjectName("LegacyCard")

@@ -36,12 +36,14 @@ from utils.importer import ImportWorker
 
 
 class SettingsDialog(QDialog):
-    settings_saved = pyqtSignal(int, int) # font_size, history_size
+    settings_saved = pyqtSignal(int, int, int, int) # app_font_size, dict_font_size, token_font_size, history_size
 
-    def __init__(self, parent=None, font_size=14, history_size=50, debug_logs=None):
+    def __init__(
+        self, parent=None, font_size=14, dict_font_size=14, token_font_size=14, history_size=50, debug_logs=None
+    ):
         super().__init__(parent)
         self.setWindowTitle("Settings & Debug")
-        self.resize(700, 600)
+        self.resize(700, 650)
         self.config = ConfigManager()
         self.debug_logs = debug_logs or []
 
@@ -98,6 +100,8 @@ class SettingsDialog(QDialog):
 
         display_section = QGroupBox("Display")
         display_section_layout = QFormLayout(display_section)
+
+        # App UI Font Size
         self.font_size_slider = QSlider(Qt.Orientation.Horizontal)
         self.font_size_slider.setRange(10, 24)
         self.font_size_slider.setValue(font_size)
@@ -106,7 +110,30 @@ class SettingsDialog(QDialog):
         font_layout = QHBoxLayout()
         font_layout.addWidget(self.font_size_slider)
         font_layout.addWidget(self.font_size_value_label)
-        display_section_layout.addRow("Font Size:", font_layout)
+        display_section_layout.addRow("App Font Size:", font_layout)
+
+        # Dictionary Card Font Size
+        self.dict_font_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.dict_font_size_slider.setRange(10, 24)
+        self.dict_font_size_slider.setValue(dict_font_size)
+        self.dict_font_size_value_label = QLabel(f"{dict_font_size}px")
+        self.dict_font_size_slider.valueChanged.connect(lambda v: self.dict_font_size_value_label.setText(f"{v}px"))
+        dict_font_layout = QHBoxLayout()
+        dict_font_layout.addWidget(self.dict_font_size_slider)
+        dict_font_layout.addWidget(self.dict_font_size_value_label)
+        display_section_layout.addRow("Dict Font Size:", dict_font_layout)
+
+        # Token Widget Font Size
+        self.token_font_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.token_font_size_slider.setRange(10, 24)
+        self.token_font_size_slider.setValue(token_font_size)
+        self.token_font_size_value_label = QLabel(f"{token_font_size}px")
+        self.token_font_size_slider.valueChanged.connect(lambda v: self.token_font_size_value_label.setText(f"{v}px"))
+        token_font_layout = QHBoxLayout()
+        token_font_layout.addWidget(self.token_font_size_slider)
+        token_font_layout.addWidget(self.token_font_size_value_label)
+        display_section_layout.addRow("Token Font Size:", token_font_layout)
+
         general_layout.addWidget(display_section)
 
         history_section = QGroupBox("History")
@@ -330,7 +357,8 @@ class SettingsDialog(QDialog):
         # Add JMDict as a toggleable source
         jmdict_item = QListWidgetItem("JMDict (built-in)")
         jmdict_item.setFlags(jmdict_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        jmdict_item.setCheckState(Qt.CheckState.Checked if self.config.get("jmdict_enabled", True) else Qt.CheckState.Unchecked)
+        jmdict_enabled = self.config.get("jmdict_enabled", True)
+        jmdict_item.setCheckState(Qt.CheckState.Checked if jmdict_enabled else Qt.CheckState.Unchecked)
         jmdict_item.setData(Qt.ItemDataRole.UserRole, ("jmdict", ""))
         jmdict_item.setToolTip("Toggle JMDict lookup")
         self.dict_list.addItem(jmdict_item)
@@ -616,8 +644,13 @@ class SettingsDialog(QDialog):
 
     def save(self):
         font_size = self.font_size_slider.value()
+        dict_font_size = self.dict_font_size_slider.value()
+        token_font_size = self.token_font_size_slider.value()
         history_size = self.history_size_slider.value()
+
         self.config.font_size = font_size
+        self.config.dict_font_size = dict_font_size
+        self.config.token_font_size = token_font_size
         self.config.history_size = history_size
         self.config.set("ai_provider", self.ai_provider.currentText())
         self.config.set("api_url", self.api_url.text())
@@ -628,5 +661,5 @@ class SettingsDialog(QDialog):
         enabled_dicts = self._get_enabled_dicts()
         self.config.set_extra_dictionaries(enabled_dicts)
 
-        self.settings_saved.emit(font_size, history_size)
+        self.settings_saved.emit(font_size, dict_font_size, token_font_size, history_size)
         self.accept()

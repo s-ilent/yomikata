@@ -47,9 +47,11 @@ class YomikataApp(QObject):
             self.processor, self.dict_service, self.history_service, self.config
         )
         self.font_size = self.config.font_size
+        self.dict_font_size = self.config.dict_font_size
+        self.token_font_size = self.config.token_font_size
 
         self.window = YomikataMainWindow(self.ai_controller)
-        self.update_font_size(self.font_size)
+        self.update_font_sizes(self.font_size, self.token_font_size)
         self._bind_ui()
 
     def _bind_ui(self):
@@ -93,15 +95,24 @@ class YomikataApp(QObject):
 
     def open_settings(self):
         font_size = self.config.font_size
+        dict_font_size = self.config.dict_font_size
+        token_font_size = self.config.token_font_size
         history_size = self.config.history_size
-        dialog = SettingsDialog(self.window, font_size, history_size, self.debug_logs)
+        dialog = SettingsDialog(
+            self.window, font_size, dict_font_size, token_font_size, history_size, self.debug_logs
+        )
         dialog.settings_saved.connect(self.apply_settings)
         dialog.exec()
 
-    def apply_settings(self, font_size, history_size):
+    def apply_settings(self, font_size, dict_font_size, token_font_size, history_size):
         # Apply the new settings
-        self.update_font_size(font_size)
-        self.log_debug(f"Settings applied: font_size={font_size}, history_size={history_size}")
+        self.dict_font_size = dict_font_size
+        self.token_font_size = token_font_size
+        self.update_font_sizes(font_size, token_font_size)
+        self.log_debug(
+            f"Settings applied: font_size={font_size}, dict_font_size={dict_font_size}, "
+            f"token_font_size={token_font_size}, history_size={history_size}"
+        )
 
     def show_history(self):
         """Show history dialog with previously analyzed texts."""
@@ -117,14 +128,16 @@ class YomikataApp(QObject):
         self.window.input_area.setPlainText(text)
         self.analyze_text()
 
-    def update_font_size(self, size: int):
+    def update_font_sizes(self, size: int, token_size: int):
         """Update font size and regenerate stylesheet."""
         self.font_size = size
+        self.token_font_size = token_size
         self.config.font_size = size
+        self.config.token_font_size = token_size
         # Re-using internal main window styling
         from ui.style import build_stylesheet
 
-        self.window.setStyleSheet(build_stylesheet(font_base=size))
+        self.window.setStyleSheet(build_stylesheet(font_base=size, token_base=token_size))
 
     def log_debug(self, message):
         timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
@@ -164,7 +177,9 @@ class YomikataApp(QObject):
 
         from ui.widgets.cards import LegacyCard
 
-        search_card = LegacyCard(f"Search: {query}", results if results else "No matches found.")
+        search_card = LegacyCard(
+            f"Search: {query}", results if results else "No matches found.", dict_font_size=self.dict_font_size
+        )
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, search_card)
 
     def update_dictionary_view(self):
@@ -182,7 +197,9 @@ class YomikataApp(QObject):
                 child.widget().deleteLater()
 
         from ui.widgets.cards import WordHeaderCard
-        header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
+        header_card = WordHeaderCard(
+            combined_surface, combined_kana, combined_romaji, lemma_list, pos_list, dict_font_size=self.dict_font_size
+        )
         self.window.card_stack.layout().addWidget(header_card)
 
         # Fetch dictionary content using structured lookup
@@ -196,7 +213,7 @@ class YomikataApp(QObject):
             key = (source, card_type)
 
             if key not in active_cards:
-                card = CardFactory.create(entry)
+                card = CardFactory.create(entry, self.dict_font_size)
                 active_cards[key] = card
                 self.window.card_stack.layout().addWidget(card)
             else:
@@ -248,7 +265,7 @@ class YomikataApp(QObject):
         from ui.widgets.cards import LegacyCard
 
         # Display AI response as a card
-        ai_card = LegacyCard("AI Notes", response)
+        ai_card = LegacyCard("AI Notes", response, dict_font_size=self.dict_font_size)
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, ai_card)
         self.window.save_ai_btn.setVisible(True)
 
@@ -258,7 +275,7 @@ class YomikataApp(QObject):
         self.window.ai_btn.setEnabled(True)
         from ui.widgets.cards import LegacyCard
 
-        error_card = LegacyCard("Error", err)
+        error_card = LegacyCard("Error", err, dict_font_size=self.dict_font_size)
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, error_card)
 
     def save_ai_to_dict(self):
@@ -269,7 +286,10 @@ class YomikataApp(QObject):
 
             from ui.widgets.cards import LegacyCard
 
-            success_card = LegacyCard("Personal Note", f"✓ Saved '{combined_surface}' to personal dictionary!")
+            msg = f"✓ Saved '{combined_surface}' to personal dictionary!"
+            success_card = LegacyCard(
+                "Personal Note", msg, dict_font_size=self.dict_font_size
+            )
             self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, success_card)
             self.window.save_ai_btn.setVisible(False)
 

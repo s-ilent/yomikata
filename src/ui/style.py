@@ -37,19 +37,19 @@ def hex_to_rgb(hex_color: str) -> tuple:
     return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
 
 
-def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
+def build_stylesheet(colors: dict = None, font_base: int = 14, token_base: int = 14) -> str:
     """Generate QSS from color palette.
 
     Args:
         colors: Optional custom palette (defaults to CATPPUCCIN_MOCHA)
         font_base: Base font size for UI elements
+        token_base: Base font size for token widgets
     """
     c = colors or CATPPUCCIN_MOCHA
 
     # Derive gradient colors from base palette
     surface_rgb = hex_to_rgb(c["surface"])
     bg_rgb = hex_to_rgb(c["background"])
-    mauve_rgb = hex_to_rgb(c["mauve"])
     sapphire_rgb = hex_to_rgb(c["sapphire"])
     cyan_rgb = hex_to_rgb(c["cyan"])
     green_rgb = hex_to_rgb(c["green"])
@@ -65,9 +65,9 @@ def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
     c["green_gradient"] = f"rgba({green_rgb[0]},{green_rgb[1]},{green_rgb[2]},0.25)"
     c["green_gradient_end"] = f"rgba({green_rgb[0]},{green_rgb[1]},{green_rgb[2]},0)"
 
-    kanji_size = get_font_size("kanji", font_base)
-    kana_size = get_font_size("kana", font_base)
-    romaji_size = get_font_size("romaji", font_base)
+    kanji_size = get_font_size("kanji", token_base)
+    kana_size = get_font_size("kana", token_base)
+    romaji_size = get_font_size("romaji", token_base)
 
     return f"""
     QMainWindow {{

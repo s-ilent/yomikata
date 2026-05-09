@@ -27,6 +27,22 @@ class ConfigManager:
         self.set("font_size", value)
 
     @property
+    def dict_font_size(self) -> int:
+        return int(self.get("dict_font_size", 14))
+
+    @dict_font_size.setter
+    def dict_font_size(self, value: int):
+        self.set("dict_font_size", value)
+
+    @property
+    def token_font_size(self) -> int:
+        return int(self.get("token_font_size", 14))
+
+    @token_font_size.setter
+    def token_font_size(self, value: int):
+        self.set("token_font_size", value)
+
+    @property
     def history_size(self) -> int:
         return int(self.get("history_size", 50))
 

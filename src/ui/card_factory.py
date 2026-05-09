@@ -10,7 +10,7 @@ from ui.widgets.cards import (
 
 class CardFactory:
     @staticmethod
-    def create(entry: dict):
+    def create(entry: dict, dict_font_size: int = 14):
         """Create and return the appropriate card type for an entry."""
         source = entry.get("source", "Dictionary")
         content = entry.get("content", "")
@@ -18,15 +18,15 @@ class CardFactory:
         priority = entry.get("priority", 0)
 
         if card_type == "jmdict":
-            return JMDictCard(source, content)
+            return JMDictCard(source, content, dict_font_size=dict_font_size)
         elif card_type == "jmnedict":
-            return JMnedictCard(source, content)
+            return JMnedictCard(source, content, dict_font_size=dict_font_size)
         elif card_type == "legacy":
-            return LegacyCard(source, content)
+            return LegacyCard(source, content, dict_font_size=dict_font_size)
         elif card_type == "markdown":
-            return MarkdownCard(source, content)
+            return MarkdownCard(source, content, dict_font_size=dict_font_size)
         else:
-            return YomitanCard(source, content, priority)
+            return YomitanCard(source, content, priority, dict_font_size=dict_font_size)
 
     @staticmethod
     def get_styled_html(html):

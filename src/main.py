@@ -42,6 +42,7 @@ class YomikataApp(QObject):
         self.font_size = self.config.font_size
 
         self.window = YomikataMainWindow(self.ai_controller)
+        self.update_font_size(self.font_size)
         self._bind_ui()
 
     def _bind_ui(self):
@@ -117,8 +118,6 @@ class YomikataApp(QObject):
         from ui.style import build_stylesheet
 
         self.window.setStyleSheet(build_stylesheet(font_base=size))
-        # Update token display sizes
-        self._update_token_font_sizes()
 
     def log_debug(self, message):
         timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")

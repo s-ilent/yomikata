@@ -2,6 +2,7 @@ import qtawesome as qta
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,7 +18,6 @@ from PyQt6.QtWidgets import (
 
 from ui.layouts.flow_layout import FlowLayout
 from ui.style import build_stylesheet
-from ui.widgets.cards import DictionaryCardStack
 
 
 class YomikataMainWindow(QMainWindow):
@@ -77,7 +77,17 @@ class YomikataMainWindow(QMainWindow):
         dict_scroll.setWidgetResizable(True)
         dict_scroll.setStyleSheet("border: none;")
 
-        self.card_stack = DictionaryCardStack()
+        self.card_stack = QFrame()
+        self.card_stack.setObjectName("DictionaryCardStack")
+        stack_layout = QVBoxLayout(self.card_stack)
+        stack_layout.setContentsMargins(0, 0, 0, 0)
+        stack_layout.setSpacing(4)
+        stack_layout.addStretch()
+        self.card_stack.setStyleSheet("""
+            QFrame#DictionaryCardStack {
+                background: transparent;
+            }
+        """)
         dict_scroll.setWidget(self.card_stack)
 
         # Search box for FTS

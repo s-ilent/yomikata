@@ -3,6 +3,7 @@ from ui.widgets.cards import (
     JMDictCard,
     JMnedictCard,
     LegacyCard,
+    MarkdownCard,
     YomitanCard,
 )
 
@@ -22,6 +23,8 @@ class CardFactory:
             return JMnedictCard(source, content)
         elif card_type == "legacy":
             return LegacyCard(source, content)
+        elif card_type == "markdown":
+            return MarkdownCard(source, content)
         else:
             return YomitanCard(source, content, priority)
 

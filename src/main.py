@@ -169,25 +169,32 @@ class YomikataApp(QObject):
             self.analysis_controller.get_selection_info()
         )
 
-        # Clear existing cards from stack (including stretch)
+        # Clear existing cards from stack
         while self.window.card_stack.layout().count():
             child = self.window.card_stack.layout().takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
         from ui.widgets.cards import WordHeaderCard
-
-        # Add word header card
         header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
         self.window.card_stack.layout().addWidget(header_card)
 
         # Fetch dictionary content using structured lookup
         result = self.analysis_controller.lookup_selection()
+        active_cards = {}  # {(source, card_type): card_instance}
 
-        # Create cards from structured entries (in normal order)
+        # Create/Populate cards from structured entries
         for entry in result.get("entries", []):
-            card = CardFactory.create(entry)
-            self.window.card_stack.layout().addWidget(card)
+            source = entry.get("source", "Dictionary")
+            card_type = entry.get("card_type", "yomitan")
+            key = (source, card_type)
+
+            if key not in active_cards:
+                card = CardFactory.create(entry)
+                active_cards[key] = card
+                self.window.card_stack.layout().addWidget(card)
+            else:
+                active_cards[key].append_entry(entry.get("content"))
 
         # Add stretch at the end
         self.window.card_stack.layout().addStretch()

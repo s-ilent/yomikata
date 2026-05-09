@@ -9,29 +9,26 @@ from PyQt6.QtWidgets import (
 from ui.style import CATPPUCCIN_MOCHA as CAT
 
 
-class DictionaryCardStack(QFrame):
-    """Container widget for stacking dictionary cards."""
+class GlossarySenseManager:
+    """Tracks and increments sense numbering for consolidated dictionary cards."""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("DictionaryCardStack")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        layout.addStretch()
-        self.setStyleSheet("""
-            QFrame#DictionaryCardStack {
-                background: transparent;
-            }
-        """)
+    def __init__(self):
+        self.sense_count = 0
+
+    def next_number(self):
+        self.sense_count += 1
+        return self.sense_count
+
+    def reset(self):
+        self.sense_count = 0
 
 
 class BaseDictionaryCard(QFrame):
-    """Base class for dictionary cards with consistent styling."""
+    """Base class for dictionary cards with consistent styling and sense management."""
 
     def __init__(self, source_label: str, content, accent_color: str, parent=None):
-        # content can be: dict, list, or str
         super().__init__(parent)
+        self.sense_manager = GlossarySenseManager()
         self.setStyleSheet(f"""
             QFrame {{
                 background: {CAT['surface']};
@@ -44,6 +41,7 @@ class BaseDictionaryCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
+        self.layout = layout
 
         # Source label - styled as superscript
         label = QLabel(source_label)
@@ -60,20 +58,16 @@ class BaseDictionaryCard(QFrame):
         """)
         layout.addWidget(label)
 
-        # Parse content and build native widgets
-        if content is None:
-            content = "No definitions"
+        # Initial parse
+        self.append_entry(content)
 
-        if isinstance(content, dict):
-            self._parse_dict_content(content, layout)
-        elif isinstance(content, list):
-            self._parse_list_content(content, layout)
-        elif isinstance(content, str):
-            self._parse_str_content(content, layout)
+    def append_entry(self, entry_content):
+        """Append new content using subclass-specific parsing logic."""
+        # Base implementation - to be overridden by subclasses
+        if isinstance(entry_content, str):
+            self._parse_str_content(entry_content, self.layout)
         else:
-            lbl = QLabel(str(content))
-            self._style_content_label(lbl)
-            layout.addWidget(lbl)
+            self._parse_dict_content(entry_content, self.layout)
 
     def _style_content_label(self, label):
         """Apply common styling to content labels."""
@@ -89,68 +83,30 @@ class BaseDictionaryCard(QFrame):
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
     def _parse_dict_content(self, data, layout):
-        """Parse Yomitan structured-content dict and build widgets."""
-        # Handle Yomitan structure: type="structured-content" with content=[]
-        if data.get("type") == "structured-content":
-            content_list = data.get("content", [])
-            self._parse_list_content(content_list, layout)
-            return
-
-        # Handle glossary list style (numbered senses)
-        style = data.get("style", {})
-        list_style = style.get("listStyleType", "")
-        if list_style.startswith('"'):
-            number = list_style.strip('"').strip()
-            # Find glossary content
-            content = data.get("content", [])
-            for item in content:
-                if isinstance(item, dict) and item.get("data", {}).get("content") == "glossary":
-                    self._add_label(f"◆{number}", layout)
-                    self._parse_dict_content(item, layout)
-                    return
-
-        # Handle glossary key
-        if "glossary" in data or "content" in data:
-            gloss = data.get("glossary") or data.get("content", [])
-            if isinstance(gloss, list):
-                for item in gloss:
-                    if isinstance(item, str):
-                        self._add_label(item, layout)
-                    elif isinstance(item, dict):
-                        self._parse_dict_content(item, layout)
-
-        # Generic: iterate through dict values
-        for key, value in data.items():
-            if key in ("type", "style", "data"):
-                continue
-            if isinstance(value, str) and value.strip():
-                self._add_label(value, layout)
-            elif isinstance(value, list):
-                self._parse_list_content(value, layout)
-            elif isinstance(value, dict):
-                self._parse_dict_content(value, layout)
-
-    def _parse_list_content(self, items, layout):
-        """Parse list content and build widgets."""
-        for item in items:
-            if isinstance(item, str) and item.strip():
-                self._add_label(item, layout)
-            elif isinstance(item, dict):
-                self._parse_dict_content(item, layout)
-            elif isinstance(item, list):
-                self._parse_list_content(item, layout)
+        # Implementation in subclasses
+        pass
 
     def _parse_str_content(self, text, layout):
-        """Parse plain text content."""
         for line in text.split('\n'):
             if line.strip():
                 self._add_label(line, layout)
 
     def _add_label(self, text, layout):
-        """Create and add a content label."""
         lbl = QLabel(text)
         self._style_content_label(lbl)
         layout.addWidget(lbl)
+
+
+class MarkdownCard(BaseDictionaryCard):
+    """Card for markdown-formatted personal notes."""
+
+    def __init__(self, source_label, content, parent=None):
+        super().__init__(source_label, content, CAT['mauve'], parent)
+        self.setObjectName("MarkdownCard")
+
+    def _style_content_label(self, label):
+        super()._style_content_label(label)
+        label.setTextFormat(Qt.TextFormat.MarkdownText)
 
 
 class WordHeaderCard(QFrame):
@@ -214,23 +170,45 @@ class WordHeaderCard(QFrame):
             layout.addWidget(meta_row)
 
 
+class YomitanCard(BaseDictionaryCard):
+    """Card for Yomitan entries (mauve accent)."""
+
+    def __init__(self, source_label, content, priority=None, parent=None):
+        if priority and priority > 0:
+            source_label = f"{source_label} ★{priority}"
+        super().__init__(source_label, content, CAT['mauve'], parent)
+        self.setObjectName("YomitanCard")
+
+    def _parse_dict_content(self, data, layout):
+        if data.get("type") == "structured-content":
+            self._parse_list_content(data.get("content", []), layout)
+            return
+
+        # Glossary/List parsing
+        if "glossary" in data or "content" in data:
+            gloss = data.get("glossary") or data.get("content", [])
+            if isinstance(gloss, list):
+                self._parse_list_content(gloss, layout)
+
+        for key, value in data.items():
+            if key in ("type", "style", "data"): continue
+            if isinstance(value, str): self._add_label(value, layout)
+            elif isinstance(value, list): self._parse_list_content(value, layout)
+            elif isinstance(value, dict): self._parse_dict_content(value, layout)
+
+    def _parse_list_content(self, items, layout):
+        for item in items:
+            if isinstance(item, str) and item.strip(): self._add_label(item, layout)
+            elif isinstance(item, dict): self._parse_dict_content(item, layout)
+            elif isinstance(item, list): self._parse_list_content(item, layout)
+
+
 class JMDictCard(BaseDictionaryCard):
     """Card for JMDict entries (blue accent)."""
 
     def __init__(self, source_label, content, parent=None):
         super().__init__(source_label, content, CAT['blue'], parent)
         self.setObjectName("JMDictCard")
-
-
-class YomitanCard(BaseDictionaryCard):
-    """Card for Yomitan entries (mauve accent)."""
-
-    def __init__(self, source_label, content, priority=None, parent=None):
-        # Call parent with priority indicator in label
-        if priority and priority > 0:
-            source_label = f"{source_label} ★{priority}"
-        super().__init__(source_label, content, CAT['mauve'], parent)
-        self.setObjectName("YomitanCard")
 
 
 class JMnedictCard(BaseDictionaryCard):
@@ -242,7 +220,7 @@ class JMnedictCard(BaseDictionaryCard):
 
 
 class LegacyCard(BaseDictionaryCard):
-    """Card for legacy Eijiro format (surface hover accent)."""
+    """Card for legacy Eijiro format."""
 
     def __init__(self, source_label, content, parent=None):
         super().__init__(source_label, content, CAT['surface_hover'], parent)

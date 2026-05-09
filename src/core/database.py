@@ -291,7 +291,7 @@ class DatabaseManager:
         # 1. Personal Note
         note = self.get_personal_note(word) or self.get_personal_note(lemma)
         if note:
-            entries.append({"source": "Personal Note", "content": note, "card_type": "legacy"})
+            entries.append({"source": "Personal Note", "content": note, "card_type": "markdown"})
 
         # 2. JMDict via jamdict
         jm_result = self.lookup_jmdict(word)

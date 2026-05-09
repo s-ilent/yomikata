@@ -4,7 +4,14 @@ import sys
 
 from PyQt6.QtCore import QDateTime, QObject, Qt
 from PyQt6.QtGui import QFontDatabase
-from PyQt6.QtWidgets import QApplication, QInputDialog
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+)
 
 from controllers.ai_controller import AIController
 from controllers.analysis_controller import AnalysisController
@@ -276,15 +283,30 @@ class YomikataApp(QObject):
         # Get existing note if any
         existing = self.dict_service.get_personal_note(combined_surface)
 
-        text, ok = QInputDialog.getMultiLineText(
-            self.window,
-            "Edit Personal Note",
-            f"Note for '{combined_surface}' (Markdown supported):",
-            existing or "",
-        )
-        if ok and text:
-            self.dict_service.save_personal_note(combined_surface, text)
-            self.update_dictionary_view()
+        dialog = QDialog(self.window)
+        dialog.setWindowTitle(f"Edit Personal Note — {combined_surface}")
+        dialog.resize(700, 500)
+
+        layout = QVBoxLayout(dialog)
+        editor = QTextEdit()
+        editor.setPlainText(existing or "")
+        layout.addWidget(editor)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        save_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            text = editor.toPlainText()
+            if text:
+                self.dict_service.save_personal_note(combined_surface, text)
+                self.update_dictionary_view()
 
 
 if __name__ == "__main__":

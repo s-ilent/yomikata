@@ -57,3 +57,5 @@ uv run pytest tests/
 ## License
 
 MIT License
+
+Disclaimer: 99% of this code is written by AI, or is an existing library. No promises about the code quality!

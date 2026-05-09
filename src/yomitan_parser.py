@@ -79,6 +79,14 @@ def _flatten_content(data, indent=0) -> str:
     return ""
 
 
+def _safe_serialize(data) -> str:
+    """Serialize structured Yomitan content to JSON string for DB storage."""
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except (TypeError, ValueError, OverflowError):
+        return json.dumps(str(data), ensure_ascii=False)
+
+
 def _extract_forms(content) -> str:
     """Extract forms (spelling/reading variants) from table structure."""
     if not isinstance(content, list):
@@ -230,7 +238,7 @@ def parse_yomitan_zip(zip_path: str) -> Generator[dict[str, Any]]:
                         glossary = ""
                         if len(item) > 5 and item[5]:
                             defs = item[5]
-                            glossary = " / ".join([_flatten_content(d) for d in defs]) if isinstance(defs, list) else _flatten_content(defs) if isinstance(defs, dict) else str(defs)
+                            glossary = _safe_serialize(defs) if isinstance(defs, (list, dict)) else str(defs)
                         priority = item[4] if len(item) > 4 else 0
 
                         entry = {

@@ -73,3 +73,44 @@ def test_lookup_structured_personal(db_manager):
     personal_entries = [e for e in result["entries"] if e["source"] == "Personal Note"]
     assert len(personal_entries) == 1
     assert personal_entries[0]["content"] == note
+
+
+def test_lookup_jmdict_structured_all_strings(db_manager):
+    """Test that lookup_jmdict_structured returns plain Python types, not jamdict objects."""
+    result = db_manager.lookup_jmdict_structured("猫")
+    if result is None:
+        pytest.skip("jamdict database not available")
+
+    for entry in result:
+        assert isinstance(entry["kanji"], str), f"Expected str, got {type(entry['kanji'])}"
+        assert isinstance(entry["kana"], str), f"Expected str, got {type(entry['kana'])}"
+        for sense in entry["senses"]:
+            for gloss in sense["gloss"]:
+                assert isinstance(gloss, str), f"Expected str, got {type(gloss)}: {gloss}"
+            for pos in sense["pos"]:
+                assert isinstance(pos, str), f"Expected str, got {type(pos)}: {pos}"
+
+
+def test_lookup_jmdict_text_is_clean(db_manager):
+    """Test that the text lookup_jmdict returns clean text (no SenseGloss TypeError)."""
+    result = db_manager.lookup_jmdict("猫")
+    if result is None:
+        pytest.skip("jamdict database not available")
+
+    assert isinstance(result, str)
+    assert "**" not in result
+    assert "猫" in result
+
+
+def test_lookup_jmdict_structured_json_serializable(db_manager):
+    """Test that structured JMDict data is JSON-serializable (no custom objects)."""
+    import json
+
+    result = db_manager.lookup_jmdict_structured("猫")
+    if result is None:
+        pytest.skip("jamdict database not available")
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert isinstance(serialized, str)
+    deserialized = json.loads(serialized)
+    assert deserialized == result

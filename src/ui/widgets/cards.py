@@ -63,9 +63,14 @@ class BaseDictionaryCard(QFrame):
 
     def append_entry(self, entry_content):
         """Append new content using subclass-specific parsing logic."""
-        # Base implementation - to be overridden by subclasses
         if isinstance(entry_content, str):
             self._parse_str_content(entry_content, self.layout)
+        elif isinstance(entry_content, list):
+            for item in entry_content:
+                if isinstance(item, dict):
+                    self._parse_dict_content(item, self.layout)
+                elif isinstance(item, str):
+                    self._add_label(item, self.layout)
         else:
             self._parse_dict_content(entry_content, self.layout)
 
@@ -180,42 +185,99 @@ class YomitanCard(BaseDictionaryCard):
         self.setObjectName("YomitanCard")
 
     def _parse_dict_content(self, data, layout):
-        if data.get("type") == "structured-content":
-            self._parse_list_content(data.get("content", []), layout)
-            return
+        from yomitan_parser import _flatten_content
 
-        # Glossary/List parsing
-        if "glossary" in data or "content" in data:
-            gloss = data.get("glossary") or data.get("content", [])
-            if isinstance(gloss, list):
-                self._parse_list_content(gloss, layout)
-
-        for key, value in data.items():
-            if key in ("type", "style", "data"): continue
-            if isinstance(value, str): self._add_label(value, layout)
-            elif isinstance(value, list): self._parse_list_content(value, layout)
-            elif isinstance(value, dict): self._parse_dict_content(value, layout)
-
-    def _parse_list_content(self, items, layout):
-        for item in items:
-            if isinstance(item, str) and item.strip(): self._add_label(item, layout)
-            elif isinstance(item, dict): self._parse_dict_content(item, layout)
-            elif isinstance(item, list): self._parse_list_content(item, layout)
-
+        text = _flatten_content(data)
+        if text.strip():
+            self._add_label(text, layout)
 
 class JMDictCard(BaseDictionaryCard):
     """Card for JMDict entries (blue accent)."""
 
     def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT['blue'], parent)
+        super().__init__(source_label, content, CAT["blue"], parent)
         self.setObjectName("JMDictCard")
+
+    def _parse_dict_content(self, data, layout):
+        """Render structured JMDict data: kanji/kana header + sense list."""
+        from PyQt6.QtWidgets import QLabel
+
+        if not isinstance(data, dict):
+            self._add_label(str(data), layout)
+            return
+
+        kanji = data.get("kanji", "")
+        kana = data.get("kana", "")
+        senses = data.get("senses", [])
+
+        # Headword line
+        if kanji or kana:
+            header_text = f"{kanji} [{kana}]" if kanji and kana else kanji or kana
+            label = QLabel(header_text)
+            label.setObjectName("JMDictHeadword")
+            label.setStyleSheet(f"""
+                QLabel#JMDictHeadword {{
+                    background: transparent;
+                    font-size: 15px;
+                    font-weight: bold;
+                    color: {CAT['blue']};
+                    padding: 0;
+                    margin: 2px 0;
+                }}
+            """)
+            layout.addWidget(label)
+
+        # Numbered senses
+        for i, sense in enumerate(senses, 1):
+            gloss_text = "; ".join(sense.get("gloss", []))
+            pos_text = ", ".join(sense.get("pos", []))
+            misc_text = " (" + ", ".join(sense.get("misc", [])) + ")" if sense.get("misc") else ""
+
+            if pos_text:
+                sense_text = f"{i}. [{pos_text}] {gloss_text}{misc_text}"
+            else:
+                sense_text = f"{i}. {gloss_text}{misc_text}"
+
+            label = QLabel(sense_text)
+            label.setObjectName("JMDictSense")
+            label.setStyleSheet(f"""
+                QLabel#JMDictSense {{
+                    background: transparent;
+                    font-size: 13px;
+                    color: {CAT['foreground']};
+                    padding: 0;
+                    margin: 1px 0 1px 8px;
+                }}
+            """)
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+            layout.addWidget(label)
+
+        # Misc note if all senses share the same misc
+        all_miscs = set()
+        for sense in senses:
+            all_miscs.update(sense.get("misc", []))
+        if len(all_miscs) == 1 and all_miscs:
+            note = QLabel(f"Note: {', '.join(all_miscs)}")
+            note.setStyleSheet(f"""
+                QLabel {{
+                    background: transparent;
+                    font-size: 11px;
+                    color: {CAT['comment']};
+                    padding: 0;
+                    margin: 2px 0 0 8px;
+                    font-style: italic;
+                }}
+            """)
+            layout.addWidget(note)
 
 
 class JMnedictCard(BaseDictionaryCard):
     """Card for JMnedict name entries (peach accent)."""
 
     def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT['peach'], parent)
+        super().__init__(source_label, content, CAT["peach"], parent)
         self.setObjectName("JMnedictCard")
 
 
@@ -223,17 +285,16 @@ class LegacyCard(BaseDictionaryCard):
     """Card for legacy Eijiro format."""
 
     def __init__(self, source_label, content, parent=None):
-        super().__init__(source_label, content, CAT['surface_hover'], parent)
+        super().__init__(source_label, content, CAT["surface_hover"], parent)
         self.setObjectName("LegacyCard")
-        # Override hover effect
         self.setStyleSheet(f"""
             QFrame#LegacyCard {{
-                background: {CAT['surface']};
-                border-left: 4px solid {CAT['surface_hover']};
+                background: {CAT["surface"]};
+                border-left: 4px solid {CAT["surface_hover"]};
                 border-radius: 6px;
                 padding: 8px;
             }}
             QFrame#LegacyCard:hover {{
-                border-left-color: {CAT['comment']};
+                border-left-color: {CAT["comment"]};
             }}
         """)

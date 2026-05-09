@@ -248,9 +248,8 @@ class DatabaseManager:
         return [(str(row[0]), str(row[1])) for row in res]
 
     def lookup_jmdict(self, word: str) -> str | None:
-        """Look up word in JMDict via jamdict and return formatted string."""
+        """Look up word in JMDict via jamdict and return formatted plain text."""
         try:
-            # Check if jamdict is properly initialized
             if not self.jam.is_available():
                 return None
 
@@ -260,20 +259,63 @@ class DatabaseManager:
 
             output = []
             for entry in result.entries:
-                # JMDEntry uses text(), kanji_forms, kana_forms, senses
                 headwords = entry.kanji_forms or []
                 readings = entry.kana_forms or []
-                # Use the first kanji as headword, first kana as reading
-                headword = headwords[0] if headwords else ""
-                reading = readings[0] if readings else ""
-                # Use text() for formatted glossary
-                glossary = entry.text() or ""
-                if headword and glossary:
-                    output.append(f"**{headword}** [{reading}]\n{glossary}")
+                headword = str(headwords[0]) if headwords else ""
+                reading = str(readings[0]) if readings else ""
+
+                sense_lines = []
+                for i, sense in enumerate(entry.senses, 1):
+                    gloss_text = "; ".join(str(g) for g in sense.gloss) if sense.gloss else ""
+                    pos_text = ", ".join(sense.pos) if sense.pos else ""
+                    if pos_text:
+                        sense_lines.append(f"  {i}. [{pos_text}] {gloss_text}")
+                    else:
+                        sense_lines.append(f"  {i}. {gloss_text}")
+
+                header = f"{headword} [{reading}]" if headword and reading else headword or reading
+                output.append(header + "\n" + "\n".join(sense_lines))
 
             return "\n\n---\n\n".join(output) if output else None
         except Exception as e:
             print(f"JMDict lookup error: {e}")
+            return None
+
+    def lookup_jmdict_structured(self, word: str) -> list | None:
+        """Look up word in JMDict via jamdict and return structured sense data.
+
+        Returns list of dicts with keys: kanji, kana, senses (list of {pos, gloss, misc}),
+        or None if no results.
+        """
+        try:
+            if not self.jam.is_available():
+                return None
+
+            result = self.jam.lookup(word)
+            if not result.entries:
+                return None
+
+            entries_structured = []
+            for entry in result.entries:
+                headwords = entry.kanji_forms or []
+                readings = entry.kana_forms or []
+                senses = []
+                for sense in entry.senses:
+                    senses.append({
+                        "pos": sense.pos or [],
+                        "gloss": [str(g) for g in sense.gloss] if sense.gloss else [],
+                        "misc": sense.misc or [],
+                    })
+
+                entries_structured.append({
+                    "kanji": str(headwords[0]) if headwords else "",
+                    "kana": str(readings[0]) if readings else "",
+                    "senses": senses,
+                })
+
+            return entries_structured
+        except Exception as e:
+            print(f"JMDict structured lookup error: {e}")
             return None
 
     def lookup_structured(self, word: str, lemma: str, extra_paths: list[str] | None = None) -> dict:
@@ -293,10 +335,10 @@ class DatabaseManager:
         if note:
             entries.append({"source": "Personal Note", "content": note, "card_type": "markdown"})
 
-        # 2. JMDict via jamdict
-        jm_result = self.lookup_jmdict(word)
-        if jm_result:
-            entries.append({"source": "JMDict", "content": jm_result, "card_type": "jmdict"})
+        # 2. JMDict via jamdict — structured
+        jm_structured = self.lookup_jmdict_structured(word)
+        if jm_structured:
+            entries.append({"source": "JMDict", "content": jm_structured, "card_type": "jmdict"})
 
         # 3. Search all registered DBs with multiple forms
         search_paths = [self.main_db] + (extra_paths or [])

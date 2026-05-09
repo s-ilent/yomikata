@@ -1,4 +1,4 @@
-from processor import TextProcessor
+from core.processor import TextProcessor
 
 
 def test_processor_tokenization():

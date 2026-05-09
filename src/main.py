@@ -10,13 +10,13 @@ from PyQt6.QtWidgets import (
     QMainWindow,
 )
 
-from config import ConfigManager
+from core.config import ConfigManager
 from controllers.ai_controller import AIController
 from controllers.analysis_controller import AnalysisController
-from database import DatabaseManager
+from core.database import DatabaseManager
 from dialogs.history_dialog import HistoryDialog
 from dialogs.settings_dialog import SettingsDialog
-from processor import TextProcessor
+from core.processor import TextProcessor
 from services.ai_service import AIService
 from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
@@ -304,7 +304,7 @@ if __name__ == "__main__":
             print(f"Error: File not found: {path}")
             sys.exit(1)
 
-        from importer import import_dictionary_archive
+        from utils.importer import import_dictionary_archive
 
         count = import_dictionary_archive(path, target_db)
         print(f"Done. Imported {count} entries to {target_db}")

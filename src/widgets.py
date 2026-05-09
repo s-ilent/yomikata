@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from database import import_dictionary_file, import_yomitan_zip
+from core.database import import_dictionary_file, import_yomitan_zip
 from style import CATPPUCCIN_MOCHA as CAT
 
 

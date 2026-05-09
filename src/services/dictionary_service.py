@@ -1,6 +1,6 @@
 import logging
 
-from database import DatabaseManager
+from core.database import DatabaseManager
 
 logger = logging.getLogger("yomikata.dictionary_service")
 

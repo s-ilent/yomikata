@@ -26,8 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import ConfigManager
-from database import (
+from core.config import ConfigManager
+from core.database import (
     create_fts_index,
     export_personal_dict,
     import_personal_dict,
@@ -421,7 +421,7 @@ class SettingsDialog(QDialog):
         word = item.text()
         definition = self.note_editor.toPlainText()
 
-        from database import _get_db
+        from core.database import _get_db
         _get_db().save_personal_note(word, definition)
         QMessageBox.information(self, "Success", "Note saved.")
 

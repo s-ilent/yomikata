@@ -2,7 +2,7 @@ import ollama
 from openai import OpenAI
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from config import ConfigManager
+from core.config import ConfigManager
 
 
 class AIWorker(QThread):

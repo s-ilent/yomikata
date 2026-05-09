@@ -7,7 +7,7 @@ from yomitan_parser import parse_yomitan_zip
 
 def import_dictionary_archive(source_path: str, target_db: str) -> int:
     """Orchestrate the import of a dictionary from either a Yomitan ZIP or an Eijiro-style text file."""
-    from database import create_fts_index, import_dictionary_file
+    from core.database import create_fts_index, import_dictionary_file
 
     # Ensure a clean slate
     if os.path.exists(target_db):

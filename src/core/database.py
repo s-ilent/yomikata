@@ -119,6 +119,163 @@ class DatabaseManager:
                 definition TEXT
             )
         """)
+        # FTS for personal notes
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_dict_fts'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE VIRTUAL TABLE personal_dict_fts USING fts5(
+                    definition,
+                    content='personal_dict',
+                    content_rowid='rowid',
+                    tokenize='trigram'
+                )
+            """)
+
+        # Main dictionary (Eijiro)
+        cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (id INTEGER PRIMARY KEY, headword TEXT, definition TEXT)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
+
+        # History for previously analyzed texts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                normalized_text TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_normalized ON history(normalized_text)")
+
+        # Rich dictionary table for modern formats
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dictionary_entries (
+                id INTEGER PRIMARY KEY,
+                headword TEXT NOT NULL,
+                reading TEXT,
+                pos TEXT,
+                pitch_accent TEXT,
+                glossary TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                dictionary_name TEXT,
+                dictionary_meta TEXT,
+                UNIQUE(headword, reading, dictionary_name)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword_rich ON dictionary_entries(headword)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
+
+        # FTS5 for rich definitions
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dictionary_entries_fts'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE VIRTUAL TABLE dictionary_entries_fts USING fts5(
+                    headword, reading, glossary,
+                    content='dictionary_entries',
+                    tokenize='trigram',
+                    detail=column
+                )
+            """)
+        conn.commit()
+
+    def save_personal_note(self, word: str, definition: str) -> None:
+        conn = self.get_conn(self.main_db)
+        cursor = conn.cursor()
+
+        # Get old definition to properly delete from FTS index
+        old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
+        if old_res:
+            cursor.execute(
+                "INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],)
+            )
+
+        cursor.execute("INSERT OR REPLACE INTO personal_dict VALUES (?, ?)", (word, definition))
+
+        # Insert new entry into FTS
+        cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
+        conn.commit()
+
+    def get_personal_note(self, word: str) -> str | None:
+        conn = self.get_conn(self.main_db)
+        res = conn.execute(
+            "SELECT definition FROM personal_dict WHERE headword = ?",
+            (word,),
+        ).fetchone()
+        return res[0] if res else None
+
+    def save_history(self, text: str, max_entries: int = 50) -> None:
+        """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
+
+        if not text.strip():
+            return
+
+        normalized = re.sub(r"\s+", " ", text.strip())
+        conn = self.get_conn(self.main_db)
+        cursor = conn.cursor()
+
+        # Check if already exists in history
+        exists = cursor.execute("SELECT id FROM history WHERE normalized_text = ?", (normalized,)).fetchone()
+
+        if exists:
+            # Update timestamp
+            cursor.execute("UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?", (exists[0],))
+        else:
+            # Insert new
+            cursor.execute("INSERT INTO history (text, normalized_text) VALUES (?, ?)", (text, normalized))
+
+        # Enforce limit - use id as tie-breaker for same timestamp
+        cursor.execute(
+            """
+            DELETE FROM history WHERE id NOT IN (
+                SELECT id FROM history ORDER BY timestamp DESC, id DESC LIMIT ?
+            )
+        """,
+            (max_entries,),
+        )
+        conn.commit()
+
+    def get_history(self, limit: int = 50) -> list[tuple[str, str]]:
+        conn = self.get_conn(self.main_db)
+        res = conn.execute(
+            "SELECT text, timestamp FROM history ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        # Cast to list[tuple[str, str]] to satisfy mypy
+        return [(str(row[0]), str(row[1])) for row in res]
+
+    def get_inflected_forms(self, word: str) -> list[str]:
+        """Use fugashi/MeCab to guess potential lemma/inflected forms."""
+        # Simple implementation for now - just returns a list with the word itself
+        # In a real app, this would use fugashi to get dictionary forms
+        return [word]
+
+    def lookup_jmdict(self, word: str) -> str | None:
+        """Look up word in JMDict via jamdict and return formatted string."""
+        try:
+            # Check if jamdict is properly initialized
+            if not self.jam.is_available():
+                return None
+
+            result = self.jam.lookup(word)
+            if not result.entries:
+                return None
+
+            output = []
+            for entry in result.entries:
+                # JMDEntry uses text(), kanji_forms, kana_forms, senses
+                headwords = entry.kanji_forms or []
+                readings = entry.kana_forms or []
+                # Use the first kanji as headword, first kana as reading
+                headword = headwords[0] if headwords else ""
+                reading = readings[0] if readings else ""
+                # Use text() for formatted glossary
+                glossary = entry.text() or ""
+                if headword and glossary:
+                    output.append(f"**{headword}** [{reading}]\n{glossary}")
+
+            return "\n\n---\n\n".join(output) if output else None
+        except Exception as e:
+            print(f"JMDict lookup error: {e}")
+            return None
 
     def lookup_structured(self, word: str, lemma: str, extra_paths: list[str] | None = None) -> dict:
         """
@@ -244,149 +401,6 @@ class DatabaseManager:
                             break
 
         return {"headword": word, "entries": entries}
-
-        # Main dictionary (Eijiro)
-        cursor.execute("CREATE TABLE IF NOT EXISTS dictionary (headword TEXT, definition TEXT)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary(headword)")
-
-        # History for previously analyzed texts
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                normalized_text TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_normalized ON history(normalized_text)")
-
-        # Rich dictionary table for modern formats
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS dictionary_entries (
-                id INTEGER PRIMARY KEY,
-                headword TEXT NOT NULL,
-                reading TEXT,
-                pos TEXT,
-                pitch_accent TEXT,
-                glossary TEXT NOT NULL,
-                priority INTEGER DEFAULT 0,
-                dictionary_name TEXT,
-                UNIQUE(headword, reading, dictionary_name)
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword_rich ON dictionary_entries(headword)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
-
-        # FTS5 for rich definitions
-        cursor.execute("DROP TABLE IF EXISTS dictionary_entries_fts")
-        cursor.execute("""
-            CREATE VIRTUAL TABLE dictionary_entries_fts USING fts5(
-                headword, reading, glossary,
-                tokenize='trigram',
-                detail=column
-            )
-        """)
-        conn.commit()
-
-    def save_personal_note(self, word: str, definition: str) -> None:
-        conn = self.get_conn(self.main_db)
-        cursor = conn.cursor()
-
-        # Get old definition to properly delete from FTS index
-        old_res = cursor.execute("SELECT definition FROM personal_dict WHERE headword = ?", (word,)).fetchone()
-        if old_res:
-            cursor.execute(
-                "INSERT INTO personal_dict_fts(personal_dict_fts, definition) VALUES('delete', ?)", (old_res[0],)
-            )
-
-        cursor.execute("INSERT OR REPLACE INTO personal_dict VALUES (?, ?)", (word, definition))
-
-        # Insert new entry into FTS
-        cursor.execute("INSERT INTO personal_dict_fts(definition) VALUES (?)", (definition,))
-        conn.commit()
-
-    def get_personal_note(self, word: str) -> str | None:
-        conn = self.get_conn(self.main_db)
-        res = conn.execute(
-            "SELECT definition FROM personal_dict WHERE headword = ?",
-            (word,),
-        ).fetchone()
-        return res[0] if res else None
-
-    def save_history(self, text: str, max_entries: int = 50) -> None:
-        """Save text to history, deduplicating by normalized form (whitespace collapsed)."""
-
-        if not text.strip():
-            return
-
-        normalized = re.sub(r"\s+", " ", text.strip())
-        conn = self.get_conn(self.main_db)
-        cursor = conn.cursor()
-
-        # Check if already exists in history
-        exists = cursor.execute("SELECT id FROM history WHERE normalized_text = ?", (normalized,)).fetchone()
-
-        if exists:
-            # Update timestamp
-            cursor.execute("UPDATE history SET timestamp = CURRENT_TIMESTAMP WHERE id = ?", (exists[0],))
-        else:
-            # Insert new
-            cursor.execute("INSERT INTO history (text, normalized_text) VALUES (?, ?)", (text, normalized))
-
-        # Enforce limit
-        cursor.execute(
-            """
-            DELETE FROM history WHERE id NOT IN (
-                SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
-            )
-        """,
-            (max_entries,),
-        )
-        conn.commit()
-
-    def get_history(self, limit: int = 50) -> list[tuple[str, str]]:
-        conn = self.get_conn(self.main_db)
-        res = conn.execute(
-            "SELECT text, timestamp FROM history ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        # Cast to list[tuple[str, str]] to satisfy mypy
-        return [(str(row[0]), str(row[1])) for row in res]
-
-    def get_inflected_forms(self, word: str) -> list[str]:
-        """Use fugashi/MeCab to guess potential lemma/inflected forms."""
-        # Simple implementation for now - just returns a list with the word itself
-        # In a real app, this would use fugashi to get dictionary forms
-        return [word]
-
-    def lookup_jmdict(self, word: str) -> str | None:
-        """Look up word in JMDict via jamdict and return formatted string."""
-        try:
-            # Check if jamdict is properly initialized
-            if not self.jam.is_available():
-                return None
-
-            result = self.jam.lookup(word)
-            if not result.entries:
-                return None
-
-            output = []
-            for entry in result.entries:
-                # JMDEntry uses text(), kanji_forms, kana_forms, senses
-                headwords = entry.kanji_forms or []
-                readings = entry.kana_forms or []
-                # Use the first kanji as headword, first kana as reading
-                headword = headwords[0] if headwords else ""
-                reading = readings[0] if readings else ""
-                # Use text() for formatted glossary
-                glossary = entry.text() or ""
-                if headword and glossary:
-                    output.append(f"**{headword}** [{reading}]\n{glossary}")
-
-            return "\n\n---\n\n".join(output) if output else None
-        except Exception as e:
-            print(f"JMDict lookup error: {e}")
-            return None
 
     def lookup(self, word: str, lemma: str, extra_paths: list[str] | None = None) -> str:
         results: list[str] = []

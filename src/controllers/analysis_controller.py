@@ -1,7 +1,7 @@
 import re
 
-from config import ConfigManager
-from processor import TextProcessor
+from core.config import ConfigManager
+from core.processor import TextProcessor
 from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
 

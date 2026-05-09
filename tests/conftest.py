@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from database import DatabaseManager
+from core.database import DatabaseManager
 
 
 @pytest.fixture

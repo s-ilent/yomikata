@@ -119,6 +119,116 @@ def test_markdown_card_rendering(qtbot):
     assert content_labels[0].textFormat() == Qt.TextFormat.MarkdownText
 
 
+def test_yomitan_card_structured_rendering(qtbot):
+    """Test YomitanCard renders structured-content data with sense numbering."""
+    from ui.widgets.cards import YomitanCard
+
+    structured = [
+        {
+            "type": "structured-content",
+            "content": {
+                "tag": "ul",
+                "lang": "ja",
+                "style": {"listStyleType": '"＊"'},
+                "content": [
+                    {
+                        "tag": "li",
+                        "content": [
+                            {"tag": "span", "data": {"class": "tag"}, "content": "noun"},
+                            {"tag": "span", "data": {"class": "tag"}, "content": "uk"},
+                            {
+                                "tag": "ol",
+                                "content": {
+                                    "tag": "li",
+                                    "style": {"listStyleType": '"① "'},
+                                    "data": {"sense-number": "1"},
+                                    "content": {
+                                        "tag": "ul",
+                                        "data": {"content": "glossary"},
+                                        "content": {"tag": "li", "content": "spring"},
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "tag": "li",
+                        "content": [
+                            {"tag": "span", "data": {"class": "tag"}, "content": "noun"},
+                            {"tag": "span", "data": {"class": "tag"}, "content": "uk"},
+                            {
+                                "tag": "ol",
+                                "content": [
+                                    {
+                                        "tag": "li",
+                                        "style": {"listStyleType": '"② "'},
+                                        "data": {"sense-number": "2"},
+                                        "content": {
+                                            "tag": "ul",
+                                            "data": {"content": "glossary"},
+                                            "content": [
+                                                {"tag": "li", "content": "spring (in one's legs)"},
+                                                {"tag": "li", "content": "bounce"},
+                                            ],
+                                        },
+                                    },
+                                    {
+                                        "tag": "li",
+                                        "style": {"listStyleType": '"③ "'},
+                                        "data": {"sense-number": "3"},
+                                        "content": {
+                                            "tag": "ul",
+                                            "data": {"content": "glossary"},
+                                            "content": [
+                                                {"tag": "li", "content": "springboard"},
+                                                {"tag": "li", "content": "impetus"},
+                                            ],
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+    ]
+
+    card = YomitanCard("Jitendex", structured)
+    qtbot.addWidget(card)
+    card.show()
+
+    sense_labels = [lb for lb in card.findChildren(QLabel) if lb.objectName() == "YomitanSense"]
+    assert len(sense_labels) == 3
+    assert "1." in sense_labels[0].text()
+    assert "spring" in sense_labels[0].text()
+    assert "noun" in sense_labels[0].text()
+    assert "uk" in sense_labels[0].text()
+    assert "2." in sense_labels[1].text()
+    assert "bounce" in sense_labels[1].text()
+    assert "3." in sense_labels[2].text()
+    assert "springboard" in sense_labels[2].text()
+
+
+def test_yomitan_card_fallback_flat_strings(qtbot):
+    """Test YomitanCard falls back to _flatten_content for simple string lists."""
+    from ui.widgets.cards import YomitanCard
+
+    simple = ["plain definition 1", "plain definition 2"]
+
+    card = YomitanCard("TestDict", simple)
+    qtbot.addWidget(card)
+    card.show()
+
+    # Should fall back to flat rendering (no YomitanSense labels)
+    sense_labels = [lb for lb in card.findChildren(QLabel) if lb.objectName() == "YomitanSense"]
+    assert len(sense_labels) == 0
+
+    # Content should be visible
+    content_labels = [lb for lb in card.findChildren(QLabel) if lb.objectName() == "ContentLabel"]
+    assert len(content_labels) > 0
+
+
 def test_card_factory_personal_note(qtbot):
     """Test CardFactory creates MarkdownCard for personal notes."""
     from ui.card_factory import CardFactory

@@ -79,6 +79,229 @@ def _flatten_content(data, indent=0) -> str:
     return ""
 
 
+def _extract_text_from_content(content) -> str:
+    """Extract plain text from structured-content tree nodes."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(_extract_text_from_content(item) for item in content).strip()
+    if isinstance(content, dict):
+        if content.get("tag") == "ruby":
+            # Extract only the base text (first child)
+            ruby_content = content.get("content", [])
+            if isinstance(ruby_content, list) and ruby_content:
+                return _extract_text_from_content(ruby_content[0])
+            return ""
+        if content.get("tag") == "br":
+            return "\n"
+        if content.get("tag") in (
+            "span", "div", "a", "li", "ol", "ul",
+            "td", "th", "tr", "thead", "tbody", "tfoot", "table",
+        ):
+            return _extract_text_from_content(content.get("content", ""))
+        # Skip images
+        if content.get("tag") == "img":
+            return ""
+        # Fallback: recurse into dict values
+        text = " ".join(
+            _extract_text_from_content(v)
+            for v in content.values()
+            if isinstance(v, (str, list, dict))
+        )
+        return text.strip()
+    return ""
+
+
+def _parse_structured_glossary(data: dict) -> list[dict]:
+    """Parse Yomitan structured-content format into sense list.
+
+    Input: a {"type": "structured-content"} dict
+    Output: [{"pos": ["noun", "uk"], "gloss": ["spring"]}, ...]
+
+    Returns empty list if data is not structured-content or can't be parsed.
+    """
+    if not isinstance(data, dict) or data.get("type") != "structured-content":
+        return []
+
+    content = data.get("content")
+    if content is None:
+        return []
+
+    # Handle case where content is a plain string (term_bank_1 style)
+    if isinstance(content, str):
+        return []
+
+    # Handle case where content is a list of items
+    if isinstance(content, list):
+        # Quick check: no dict items with tag="ul" or "ol" means not a Jitendex-style structure
+        has_structural_tag = any(
+            isinstance(item, dict) and item.get("tag") in ("ul", "ol")
+            for item in content
+        )
+        if not has_structural_tag:
+            return []
+
+        # Try each item - look for ul containers with list items
+        for item in content:
+            if isinstance(item, dict) and item.get("tag") == "ul":
+                result = _parse_sense_group(item)
+                if result:
+                    return result
+            elif isinstance(item, dict) and item.get("tag") == "ol":
+                result = _parse_flat_senses(item)
+                if result:
+                    return result
+        return []
+
+    # Handle case where content is a single dict (term_bank_2 / Jitendex style)
+    if isinstance(content, dict):
+        if content.get("tag") == "ul":
+            return _parse_sense_group(content)
+        if content.get("tag") == "ol":
+            return _parse_flat_senses(content)
+        return []
+
+    return []
+
+
+def _parse_sense_group(ul_data: dict) -> list[dict]:
+    """Parse a ul > li sense-group container from Jitendex format."""
+    senses = []
+    li_items = ul_data.get("content", [])
+
+    if isinstance(li_items, dict):
+        li_items = [li_items]
+
+    if not isinstance(li_items, list):
+        return []
+
+    for li in li_items:
+        if not isinstance(li, dict) or li.get("tag") != "li":
+            continue
+
+        # Skip non-glossary sections (forms, examples, etc.)
+        li_data = li.get("data", {})
+        if li_data.get("content") in ("forms",):
+            continue
+
+        # Collect POS tags from span.tag elements at this level
+        pos_tags = _collect_pos_tags(li.get("content", []))
+
+        # Find the ol containing numbered senses
+        li_content = li.get("content", [])
+        if isinstance(li_content, dict):
+            li_content = [li_content]
+
+        has_found_ol = False
+        for child in li_content:
+            if isinstance(child, dict) and child.get("tag") == "ol":
+                has_found_ol = True
+                # Parse the numbered senses within this ol
+                ol_content = child.get("content", [])
+                if isinstance(ol_content, dict):
+                    ol_content = [ol_content]
+                if isinstance(ol_content, list):
+                    for sense_li in ol_content:
+                        if isinstance(sense_li, dict) and sense_li.get("tag") == "li":
+                            sense = _parse_single_sense(sense_li)
+                            if sense:
+                                # Merge with the group-level POS tags
+                                if sense.get("pos"):
+                                    # POS from sense level adds to group POS
+                                    pass
+                                else:
+                                    sense["pos"] = pos_tags
+                                senses.append(sense)
+
+        # No ol found - this could be a single-sense group with just a glossary
+        if not has_found_ol:
+            glosses = _extract_glosses(li_content)
+            if glosses:
+                senses.append({"pos": pos_tags, "gloss": glosses})
+
+    return senses
+
+
+def _parse_flat_senses(ol_data: dict) -> list[dict]:
+    """Parse an ol > li flat sense list (simpler format)."""
+    senses = []
+    ol_content = ol_data.get("content", [])
+    if isinstance(ol_content, dict):
+        ol_content = [ol_content]
+    if not isinstance(ol_content, list):
+        return []
+
+    for li in ol_content:
+        if not isinstance(li, dict) or li.get("tag") != "li":
+            continue
+        sense = _parse_single_sense(li)
+        if sense:
+            senses.append(sense)
+
+    return senses
+
+
+def _parse_single_sense(li_data: dict) -> dict | None:
+    """Parse a single sense li, extracting glosses."""
+    pos = _collect_pos_tags(li_data.get("content", []))
+
+    content = li_data.get("content", [])
+    if isinstance(content, dict):
+        content = [content]
+    if not isinstance(content, list):
+        return None
+
+    glosses = _extract_glosses(content)
+    if not glosses:
+        # Fallback: use text content
+        text = _extract_text_from_content(content)
+        if text.strip():
+            glosses = [text.strip()]
+
+    if glosses:
+        return {"pos": pos, "gloss": glosses}
+    return None
+
+
+def _collect_pos_tags(content) -> list[str]:
+    """Collect POS tag text from span[data.class="tag"] elements."""
+    if not isinstance(content, list):
+        if isinstance(content, dict):
+            content = [content]
+        else:
+            return []
+
+    tags = []
+    for item in content:
+        if isinstance(item, dict) and item.get("tag") == "span":
+            item_data = item.get("data", {})
+            if item_data.get("class") == "tag":
+                tag_text = item.get("content", "")
+                if isinstance(tag_text, str) and tag_text.strip():
+                    tags.append(tag_text.strip())
+    return tags
+
+
+def _extract_glosses(content: list) -> list[str]:
+    """Extract gloss text from ul[data.content="glossary"] elements."""
+    glosses = []
+    for item in content:
+        if isinstance(item, dict) and item.get("tag") == "ul":
+            ul_data = item.get("data", {})
+            if ul_data.get("content") == "glossary":
+                # Found a glossary list
+                glossary_content = item.get("content", [])
+                if isinstance(glossary_content, dict):
+                    glossary_content = [glossary_content]
+                if isinstance(glossary_content, list):
+                    for gloss_li in glossary_content:
+                        if isinstance(gloss_li, dict) and gloss_li.get("tag") == "li":
+                            text = _extract_text_from_content(gloss_li.get("content", ""))
+                            if text.strip():
+                                glosses.append(text.strip())
+    return glosses
+
+
 def _safe_serialize(data) -> str:
     """Serialize structured Yomitan content to JSON string for DB storage."""
     try:

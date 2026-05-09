@@ -29,15 +29,6 @@ class BaseDictionaryCard(QFrame):
     def __init__(self, source_label: str, content, accent_color: str, parent=None):
         super().__init__(parent)
         self.sense_manager = GlossarySenseManager()
-        self.setStyleSheet(f"""
-            QFrame {{
-                background: {CAT['surface']};
-                border-left: 4px solid {accent_color};
-                border-radius: 6px;
-                padding: 4px;
-            }}
-        """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(2)
@@ -77,7 +68,7 @@ class BaseDictionaryCard(QFrame):
     def _style_content_label(self, label):
         """Apply common styling to content labels."""
         label.setStyleSheet(f"""
-            QLabel {{
+            QLabel#ContentLabel {{
                 background: transparent;
                 font-size: 14px;
                 color: {CAT['foreground']};
@@ -98,6 +89,7 @@ class BaseDictionaryCard(QFrame):
 
     def _add_label(self, text, layout):
         lbl = QLabel(text)
+        lbl.setObjectName("ContentLabel")
         self._style_content_label(lbl)
         layout.addWidget(lbl)
 
@@ -120,15 +112,6 @@ class WordHeaderCard(QFrame):
     def __init__(self, headword, reading, romaji, lemma, pos, parent=None):
         super().__init__(parent)
         self.setObjectName("WordHeaderCard")
-        self.setStyleSheet(f"""
-            QFrame#WordHeaderCard {{
-                background: {CAT['surface']};
-                border-left: 4px solid {CAT['red']};
-                border-radius: 6px;
-                padding: 8px;
-            }}
-        """)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 8, 16, 8)
         layout.setSpacing(4)
@@ -160,6 +143,7 @@ class WordHeaderCard(QFrame):
         # Lemma + POS (green badges)
         if lemma or pos:
             meta_row = QLabel()
+            meta_row.setObjectName("MetaRow")
             meta_parts = []
             if lemma:
                 meta_parts.append(f"Lemma: {lemma}")
@@ -167,7 +151,7 @@ class WordHeaderCard(QFrame):
                 meta_parts.append(f"Type: {pos}")
             meta_row.setText(" | ".join(meta_parts))
             meta_row.setStyleSheet(f"""
-                QLabel {{
+                QLabel#MetaRow {{
                     font-size: 12px;
                     color: {CAT['green']};
                 }}
@@ -185,11 +169,38 @@ class YomitanCard(BaseDictionaryCard):
         self.setObjectName("YomitanCard")
 
     def _parse_dict_content(self, data, layout):
-        from yomitan_parser import _flatten_content
+        from yomitan_parser import _parse_structured_glossary, _flatten_content
 
-        text = _flatten_content(data)
-        if text.strip():
-            self._add_label(text, layout)
+        senses = _parse_structured_glossary(data)
+        if senses:
+            for i, sense in enumerate(senses, 1):
+                pos_text = ", ".join(sense.get("pos", [])) if sense.get("pos") else ""
+                gloss_text = "; ".join(sense.get("gloss", []))
+
+                if pos_text:
+                    sense_text = f"{i}. [{pos_text}] {gloss_text}"
+                else:
+                    sense_text = f"{i}. {gloss_text}"
+
+                lbl = QLabel(sense_text)
+                lbl.setObjectName("YomitanSense")
+                lbl.setStyleSheet(f"""
+                    QLabel#YomitanSense {{
+                        background: transparent;
+                        font-size: 13px;
+                        color: {CAT['foreground']};
+                        padding: 0;
+                        margin: 1px 0 1px 8px;
+                    }}
+                """)
+                lbl.setWordWrap(True)
+                lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+                layout.addWidget(lbl)
+        else:
+            text = _flatten_content(data)
+            if text.strip():
+                self._add_label(text, layout)
 
 class JMDictCard(BaseDictionaryCard):
     """Card for JMDict entries (blue accent)."""
@@ -260,8 +271,9 @@ class JMDictCard(BaseDictionaryCard):
             all_miscs.update(sense.get("misc", []))
         if len(all_miscs) == 1 and all_miscs:
             note = QLabel(f"Note: {', '.join(all_miscs)}")
+            note.setObjectName("MiscNote")
             note.setStyleSheet(f"""
-                QLabel {{
+                QLabel#MiscNote {{
                     background: transparent;
                     font-size: 11px;
                     color: {CAT['comment']};
@@ -287,14 +299,3 @@ class LegacyCard(BaseDictionaryCard):
     def __init__(self, source_label, content, parent=None):
         super().__init__(source_label, content, CAT["surface_hover"], parent)
         self.setObjectName("LegacyCard")
-        self.setStyleSheet(f"""
-            QFrame#LegacyCard {{
-                background: {CAT["surface"]};
-                border-left: 4px solid {CAT["surface_hover"]};
-                border-radius: 6px;
-                padding: 8px;
-            }}
-            QFrame#LegacyCard:hover {{
-                border-left-color: {CAT["comment"]};
-            }}
-        """)

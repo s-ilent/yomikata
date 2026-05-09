@@ -76,8 +76,13 @@ def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
     romaji_size = get_font_size("romaji", font_base)
 
     return f"""
-    QMainWindow, QWidget {{
+    QMainWindow {{
         background-color: {c["background"]};
+        color: {c["foreground"]};
+        font-family: 'Shippori Mincho', 'Meiryo', 'Segoe UI';
+    }}
+
+    QWidget {{
         color: {c["foreground"]};
         font-family: 'Shippori Mincho', 'Meiryo', 'Segoe UI';
     }}
@@ -190,6 +195,41 @@ def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
     QFrame#TokenCard[selected="true"] QLabel#Romaji {{ color: {c["foreground"]}; }}
     QFrame#TokenCard[selected="true"] QLabel#Kana {{ color: {c["background"]}; }}
     QFrame#TokenCard[selected="true"] QLabel#Surface {{ color: {c["background"]}; }}
+
+    /* Dictionary card frames */
+    QFrame#YomitanCard, QFrame#MarkdownCard {{
+        background: {c["surface"]};
+        border-left: 4px solid {c["mauve"]};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    QFrame#JMDictCard {{
+        background: {c["surface"]};
+        border-left: 4px solid {c["blue"]};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    QFrame#JMnedictCard {{
+        background: {c["surface"]};
+        border-left: 4px solid {c["peach"]};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    QFrame#WordHeaderCard {{
+        background: {c["surface"]};
+        border-left: 4px solid {c["red"]};
+        border-radius: 6px;
+        padding: 8px;
+    }}
+    QFrame#LegacyCard {{
+        background: {c["surface"]};
+        border-left: 4px solid {c["surface_hover"]};
+        border-radius: 6px;
+        padding: 8px;
+    }}
+    QFrame#LegacyCard:hover {{
+        border-left-color: {c["comment"]};
+    }}
 
     QLineEdit {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,

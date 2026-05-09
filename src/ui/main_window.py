@@ -100,8 +100,7 @@ class YomikataMainWindow(QMainWindow):
         search_btn.setToolTip("Search")
         search_layout.addWidget(self.search_box)
         search_layout.addWidget(search_btn)
-        search_btn.setObjectName("primary-btn")
-        search_btn.setStyleSheet("padding: 0;")
+        search_btn.setObjectName("IconBtn")
 
         # --- AI and Settings Buttons ---
         ai_controls_layout = QHBoxLayout()
@@ -130,22 +129,20 @@ class YomikataMainWindow(QMainWindow):
         self.edit_note_btn = QPushButton("Edit Note")
         self.edit_note_btn.setIcon(qta.icon("fa5s.edit", color="white"))
         self.edit_note_btn.setEnabled(False)
-        self.edit_note_btn.setObjectName("secondary-btn")
+        self.edit_note_btn.setProperty("class", "secondary-btn")
         self.edit_note_btn.setMinimumHeight(40)
 
         self.history_btn = QPushButton()
         self.history_btn.setIcon(qta.icon("fa5s.clock", color="white"))
         self.history_btn.setFixedSize(40, 40)
         self.history_btn.setToolTip("History")
-        self.history_btn.setObjectName("secondary-btn")
-        self.history_btn.setStyleSheet("padding: 0;")
+        self.history_btn.setObjectName("IconBtn")
 
         self.settings_btn = QPushButton()
         self.settings_btn.setIcon(qta.icon("fa5s.cog", color="white"))
         self.settings_btn.setFixedSize(40, 40)
         self.settings_btn.setToolTip("Settings")
-        self.settings_btn.setObjectName("secondary-btn")
-        self.settings_btn.setStyleSheet("padding: 0;")
+        self.settings_btn.setObjectName("IconBtn")
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)

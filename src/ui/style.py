@@ -55,17 +55,11 @@ def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
     green_rgb = hex_to_rgb(c["green"])
 
     # Gradient colors: (r,g,b) at alpha 1 and alpha 0
-    c["surface_gradient"] = (
-        f"rgba({surface_rgb[0]},{surface_rgb[1]},{surface_rgb[2]},1)"
-    )
+    c["surface_gradient"] = f"rgba({surface_rgb[0]},{surface_rgb[1]},{surface_rgb[2]},1)"
     c["surface_gradient_end"] = f"rgba({bg_rgb[0]},{bg_rgb[1]},{bg_rgb[2]},0)"
     # Subtle accent gradients (alpha 0.25 for top, 0 for bottom)
-    c["sapphire_gradient"] = (
-        f"rgba({sapphire_rgb[0]},{sapphire_rgb[1]},{sapphire_rgb[2]},0.25)"
-    )
-    c["sapphire_gradient_end"] = (
-        f"rgba({sapphire_rgb[0]},{sapphire_rgb[1]},{sapphire_rgb[2]},0)"
-    )
+    c["sapphire_gradient"] = f"rgba({sapphire_rgb[0]},{sapphire_rgb[1]},{sapphire_rgb[2]},0.25)"
+    c["sapphire_gradient_end"] = f"rgba({sapphire_rgb[0]},{sapphire_rgb[1]},{sapphire_rgb[2]},0)"
     c["cyan_gradient"] = f"rgba({cyan_rgb[0]},{cyan_rgb[1]},{cyan_rgb[2]},0.25)"
     c["cyan_gradient_end"] = f"rgba({cyan_rgb[0]},{cyan_rgb[1]},{cyan_rgb[2]},0)"
     c["green_gradient"] = f"rgba({green_rgb[0]},{green_rgb[1]},{green_rgb[2]},0.25)"
@@ -151,6 +145,45 @@ def build_stylesheet(colors: dict = None, font_base: int = 14) -> str:
         background: {c["surface"]};
         color: {c["comment"]};
         border: 1px solid {c["surface_hover"]};
+    }}
+
+    QPushButton#IconBtn {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 {c["sapphire_gradient"]},
+            stop:1 {c["sapphire_gradient_end"]});
+        color: {c["foreground"]};
+        border-radius: 6px;
+        border: 1px solid {c["surface_hover"]};
+        padding: 0;
+        font-size: {font_base}px;
+    }}
+    QPushButton#IconBtn:hover {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 {c["cyan_gradient"]},
+            stop:1 {c["cyan_gradient_end"]});
+    }}
+    QPushButton#IconBtn:disabled {{
+        background: {c["surface"]};
+        color: {c["comment"]};
+        border: 1px solid {c["surface_hover"]};
+    }}
+
+    QComboBox {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 {c["sapphire_gradient"]},
+            stop:1 {c["sapphire_gradient_end"]});
+        color: {c["foreground"]};
+        border-radius: 6px;
+        border: 1px solid {c["surface_hover"]};
+        padding: 8px;
+        font-size: {font_base}px;
+    }}
+    QComboBox:hover {{
+        border: 1px solid {c["comment"]};
+    }}
+    QComboBox::drop-down {{
+        border: none;
+        width: 24px;
     }}
 
     QPushButton.success-btn {{

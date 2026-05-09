@@ -1,12 +1,12 @@
-from ui.widgets.token_widgets import PunctuationWidget, TokenWidget
 from ui.widgets.cards import (
     DictionaryCardStack,
     JMDictCard,
     JMnedictCard,
     LegacyCard,
-    YomitanCard,
     WordHeaderCard,
+    YomitanCard,
 )
+from ui.widgets.token_widgets import PunctuationWidget, TokenWidget
 from utils.importer import ImportWorker
 
 __all__ = [

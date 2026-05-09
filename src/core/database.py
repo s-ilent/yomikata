@@ -55,10 +55,15 @@ def _format_card_content(content: str) -> str:
     return content
 
 
+from core.linguistics import LinguisticsManager
+
+
 class DatabaseManager:
     def __init__(self, main_db: str = "yomikata.db") -> None:
         self.main_db = main_db
-        self._conn_cache: dict[str, sqlite3.Connection] = {}  # Cache open connections
+        self.linguistics = LinguisticsManager()
+        self._conn_cache: dict[str, sqlite3.Connection] = {}
+  # Cache open connections
         # Initialize jamdict for JMDict lookups
         # Use jamdict-data pre-built database
         db_path = os.path.join(os.path.dirname(jamdict_data.__file__), "jamdict.db")
@@ -242,12 +247,6 @@ class DatabaseManager:
         # Cast to list[tuple[str, str]] to satisfy mypy
         return [(str(row[0]), str(row[1])) for row in res]
 
-    def get_inflected_forms(self, word: str) -> list[str]:
-        """Use fugashi/MeCab to guess potential lemma/inflected forms."""
-        # Simple implementation for now - just returns a list with the word itself
-        # In a real app, this would use fugashi to get dictionary forms
-        return [word]
-
     def lookup_jmdict(self, word: str) -> str | None:
         """Look up word in JMDict via jamdict and return formatted string."""
         try:
@@ -304,7 +303,7 @@ class DatabaseManager:
 
         # Collect all forms to search
         forms_to_try = [word]
-        inflected_forms = self.get_inflected_forms(word)
+        inflected_forms = self.linguistics.get_inflected_forms(word)
         for form in inflected_forms:
             if form and form != word and form != lemma and form not in forms_to_try:
                 forms_to_try.append(form)
@@ -420,7 +419,7 @@ class DatabaseManager:
 
         # Collect all forms to search
         forms_to_try = [word]
-        inflected_forms = self.get_inflected_forms(word)
+        inflected_forms = self.linguistics.get_inflected_forms(word)
         for form in inflected_forms:
             if form and form != word and form != lemma and form not in forms_to_try:
                 forms_to_try.append(form)

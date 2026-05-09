@@ -5,7 +5,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
 )
+
 from ui.style import CATPPUCCIN_MOCHA as CAT
+
 
 class DictionaryCardStack(QFrame):
     """Container widget for stacking dictionary cards."""

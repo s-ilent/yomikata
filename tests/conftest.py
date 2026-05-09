@@ -4,6 +4,7 @@ import tempfile
 import pytest
 
 from core.database import DatabaseManager
+from core.linguistics import LinguisticsManager
 
 
 @pytest.fixture
@@ -22,6 +23,7 @@ def db_manager(tmp_db_path):
     manager = DatabaseManager.__new__(DatabaseManager)
     manager.main_db = tmp_db_path
     manager._conn_cache = {}
+    manager.linguistics = LinguisticsManager() # FIX: Initialize linguistics
 
     # Manually mimic the init, skipping jamdict for speed/safety in tests
     # Or just calling init_main_db safely

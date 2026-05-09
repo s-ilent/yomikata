@@ -6,11 +6,11 @@ import sys
 from PyQt6.QtCore import QThread
 from PyQt6.QtCore import pyqtSignal as QtSignal
 
-from core.database import create_fts_index, import_dictionary_file, import_yomitan_zip
+from core.database import create_fts_index, import_dictionary_file
 from yomitan_parser import parse_yomitan_zip
 
 
-def import_dictionary_archive(source_path: str, target_db: str) -> int:
+def import_dictionary_archive(source_path: str, target_db: str, progress_callback=None) -> int:
     """Orchestrate the import of a dictionary from either a Yomitan ZIP or an Eijiro-style text file."""
     # Ensure a clean slate
     if os.path.exists(target_db):
@@ -38,6 +38,8 @@ def import_dictionary_archive(source_path: str, target_db: str) -> int:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_headword ON dictionary_entries(headword)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading ON dictionary_entries(reading)")
 
+        # For ZIPs, we can't easily know total ahead of time without pre-parsing everything.
+        # We'll use a simple count-only progress if callback is provided
         count = 0
         for entry in parse_yomitan_zip(source_path):
             # Ensure 'pos' is a string before inserting.
@@ -64,8 +66,8 @@ def import_dictionary_archive(source_path: str, target_db: str) -> int:
                   entry['glossary'], priority, entry['dictionary_name'],
                   json.dumps(entry.get('dictionary_meta', {}))))
             count += 1
-            if count % 10000 == 0:
-                print(f"  Imported {count} entries...")
+            if count % 1000 == 0 and progress_callback:
+                progress_callback(count, None) # Indeterminate
         conn.commit()
         conn.close()
 
@@ -73,7 +75,7 @@ def import_dictionary_archive(source_path: str, target_db: str) -> int:
         return count
     else:
         # Assume Text (Eijiro) format
-        return import_dictionary_file(source_path, target_db, progress_callback=lambda p: print(f"Imported {p} entries..."))
+        return import_dictionary_file(source_path, target_db, progress_callback=progress_callback)
 
 
 class ImportWorker(QThread):
@@ -94,22 +96,22 @@ class ImportWorker(QThread):
                 debug_logs.append(msg)
                 print(f"IMPORT: {msg}", file=sys.stderr)
 
+            # Updated progress handler
+            def progress_cb(current, total):
+                if total:
+                    self.progress.emit(int((current / total) * 100))
+                else:
+                    # Indeterminate: cycle through 10-90% to show activity
+                    self.progress.emit(10 + (current % 80))
+
             if self.import_format == "Yomitan (ZIP)":
-                # Assuming simple progress for ZIP
-                def progress_cb(p, t):
-                    self.progress.emit(int((p/t)*100))
-                
-                # We need to adapt import_yomitan_zip to accept callback
-                # But for now, let's keep the existing signature and work around it
-                # or update it. Since I cannot change yomitan_parser,
-                # I'll use a direct count estimate if possible.
-                count = import_yomitan_zip(self.source_path, self.target_db_path, progress_callback=progress_cb)
+                count = import_dictionary_archive(self.source_path, self.target_db_path, progress_callback=progress_cb)
             else:
                 count = import_dictionary_file(
                     self.source_path,
                     self.target_db_path,
-                    lambda p: self.progress.emit(p % 101), # Simple progress for now
-                    debug_cb
+                    progress_callback=lambda p: progress_cb(p, None), # Assuming old files don't report total
+                    debug_callback=debug_cb
                 )
 
             self.finished.emit(count)

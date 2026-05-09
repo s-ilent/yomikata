@@ -1,5 +1,7 @@
 import pytest
+
 from core.processor import TextProcessor
+
 
 @pytest.fixture
 def processor():

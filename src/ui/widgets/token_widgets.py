@@ -1,13 +1,13 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QCursor, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
-    QSizePolicy,
     QVBoxLayout,
 )
-from PyQt6.QtGui import QCursor, QFont, QFontMetrics, QPainter
+
 from ui.style import CATPPUCCIN_MOCHA as CAT
-from PyQt6.QtCore import pyqtSignal
+
 
 class PunctuationWidget(QLabel):
     """Small, non-clickable widget for 、。！？ etc."""

@@ -2,38 +2,30 @@ import argparse
 import os
 import sys
 
-from PyQt6.QtCore import QDateTime, Qt
+from PyQt6.QtCore import QDateTime, QObject, Qt
 from PyQt6.QtGui import QFontDatabase
-from PyQt6.QtWidgets import (
-    QApplication,
-    QInputDialog,
-    QMainWindow,
-)
+from PyQt6.QtWidgets import QApplication, QInputDialog
 
-from core.config import ConfigManager
 from controllers.ai_controller import AIController
 from controllers.analysis_controller import AnalysisController
+from core.config import ConfigManager
 from core.database import DatabaseManager
+from core.processor import TextProcessor
 from dialogs.history_dialog import HistoryDialog
 from dialogs.settings_dialog import SettingsDialog
-from core.processor import TextProcessor
 from services.ai_service import AIService
 from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
-from ui.style import build_stylesheet, get_font_size
 from ui.card_factory import CardFactory
-from ui.main_window import YomikataUI
-from ui.widgets.cards import (
-    LegacyCard,
-    WordHeaderCard,
-)
+from ui.main_window import YomikataMainWindow
 from ui.widgets.token_widgets import (
     PunctuationWidget,
     TokenWidget,
 )
+from utils.importer import import_dictionary_archive
 
 
-class YomikataApp(QMainWindow):
+class YomikataApp(QObject):
     def __init__(self):
         super().__init__()
         self.debug_logs = []  # Store logs for the settings menu
@@ -49,39 +41,33 @@ class YomikataApp(QMainWindow):
         )
         self.font_size = self.config.font_size
 
-        # Initialize UI placeholders so YomikataUI can assign to them
-        self.input_area = None
-        self.matrix_layout = None
-        self.matrix_container = None
-        self.scroll = None
-        self.card_stack = None
-        self.ai_template = None
-        self.ai_btn = None
-        self.save_ai_btn = None
-        self.edit_note_btn = None
-        self.history_btn = None
-        self.settings_btn = None
-        self.progress_bar = None
-        self.search_box = None
-        self.splitter = None
-        self.analyze_btn = None
+        self.window = YomikataMainWindow(self.ai_controller)
+        self._bind_ui()
 
-        self.ui = YomikataUI(self)
+    def _bind_ui(self):
+        self.window.analyze_btn.clicked.connect(self.analyze_text)
+        self.window.search_box.returnPressed.connect(self.do_definition_search)
+        self.window.ai_btn.clicked.connect(self.ask_ai)
+        self.window.save_ai_btn.clicked.connect(self.save_ai_to_dict)
+        self.window.edit_note_btn.clicked.connect(self.edit_note)
+        self.window.history_btn.clicked.connect(self.show_history)
+        self.window.settings_btn.clicked.connect(self.open_settings)
+        self.window.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if obj is self.input_area and event.type() == event.Type.KeyPress:
+        if obj is self.window.input_area and event.type() == event.Type.KeyPress:
             if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.analyze_text()
                 return True
         return super().eventFilter(obj, event)
 
     def analyze_text(self):
-        text = self.input_area.toPlainText().strip()
+        text = self.window.input_area.toPlainText().strip()
         if not text:
             return
 
-        while self.matrix_layout.count():
-            item = self.matrix_layout.takeAt(0)
+        while self.window.matrix_layout.count():
+            item = self.window.matrix_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
@@ -91,16 +77,16 @@ class YomikataApp(QMainWindow):
         for token in tokens:
             if token["surface"] in punct_chars or "記号" in token["pos"]:
                 widget = PunctuationWidget(token["surface"])
-                self.matrix_layout.addWidget(widget)
+                self.window.matrix_layout.addWidget(widget)
             else:
                 card = TokenWidget(token)
                 card.clicked.connect(self.handle_token_click)
-                self.matrix_layout.addWidget(card)
+                self.window.matrix_layout.addWidget(card)
 
     def open_settings(self):
         font_size = self.config.font_size
         history_size = self.config.history_size
-        dialog = SettingsDialog(self, font_size, history_size, self.debug_logs)
+        dialog = SettingsDialog(self.window, font_size, history_size, self.debug_logs)
         dialog.settings_saved.connect(self.apply_settings)
         dialog.exec()
 
@@ -114,35 +100,24 @@ class YomikataApp(QMainWindow):
         max_entries = self.config.history_size
         entries = self.history_service.get_history(limit=max_entries)
 
-        dialog = HistoryDialog(self, entries, self.font_size)
+        dialog = HistoryDialog(self.window, entries, self.font_size)
         dialog.text_selected.connect(self.restore_history_text)
         dialog.exec()
 
     def restore_history_text(self, text):
         """Restore text from history and analyze."""
-        self.input_area.setPlainText(text)
+        self.window.input_area.setPlainText(text)
         self.analyze_text()
 
     def update_font_size(self, size: int):
         """Update font size and regenerate stylesheet."""
         self.font_size = size
         self.config.font_size = size
-        self.setStyleSheet(build_stylesheet(font_base=size))
+        # Re-using internal main window styling
+        from ui.style import build_stylesheet
+        self.window.setStyleSheet(build_stylesheet(font_base=size))
         # Update token display sizes
-        self._update_token_font_sizes()
-
-    def _update_token_font_sizes(self):
-        """Update font sizes in existing token widgets."""
-        kanji_size = get_font_size("kanji", self.font_size)
-        kana_size = get_font_size("kana", self.font_size)
-        romaji_size = get_font_size("romaji", self.font_size)
-
-        for i in range(self.matrix_layout.count()):
-            widget = self.matrix_layout.itemAt(i).widget()
-            if widget and isinstance(widget, TokenWidget):
-                widget.romaji_lbl.setStyleSheet(f"font-size: {romaji_size}px; color: #6272a4;")
-                widget.kana_lbl.setStyleSheet(f"font-size: {kana_size}px; font-weight: bold; color: #8be9fd;")
-                widget.surface_lbl.setStyleSheet(f"font-size: {kanji_size}px; font-weight: 500; color: #f8f8f2;")
+        # self._update_token_font_sizes()
 
     def log_debug(self, message):
         timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
@@ -151,12 +126,12 @@ class YomikataApp(QMainWindow):
 
     def handle_token_click(self, data, ctrl_held):
         # Find the widget that sent the signal
-        sender = self.sender()
+        sender = self.window.sender()
         result = self.analysis_controller.toggle_token_selection(data, ctrl_held)
 
         if not ctrl_held:
-            for i in range(self.matrix_layout.count()):
-                w = self.matrix_layout.itemAt(i).widget()
+            for i in range(self.window.matrix_layout.count()):
+                w = self.window.matrix_layout.itemAt(i).widget()
                 if isinstance(w, TokenWidget):
                     w.set_highlight(False)
             sender.set_highlight(True)
@@ -167,7 +142,7 @@ class YomikataApp(QMainWindow):
 
     def do_definition_search(self):
         """Search inside definitions using FTS5."""
-        query = self.search_box.text().strip()
+        query = self.window.search_box.text().strip()
         if not query:
             return
 
@@ -175,13 +150,14 @@ class YomikataApp(QMainWindow):
         results = self.dict_service.search_definitions(query, extra_dicts)
 
         # Clear cards and show search results
-        while self.card_stack.layout().count():
-            child = self.card_stack.layout().takeAt(0)
+        while self.window.card_stack.layout().count():
+            child = self.window.card_stack.layout().takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
+        from ui.widgets.cards import LegacyCard
         search_card = LegacyCard(f"Search: {query}", results if results else "No matches found.")
-        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, search_card)
+        self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, search_card)
 
     def update_dictionary_view(self):
         if not self.analysis_controller.selection_list:
@@ -192,14 +168,15 @@ class YomikataApp(QMainWindow):
         )
 
         # Clear existing cards from stack (including stretch)
-        while self.card_stack.layout().count():
-            child = self.card_stack.layout().takeAt(0)
+        while self.window.card_stack.layout().count():
+            child = self.window.card_stack.layout().takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
+        from ui.widgets.cards import WordHeaderCard
         # Add word header card
         header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
-        self.card_stack.layout().addWidget(header_card)
+        self.window.card_stack.layout().addWidget(header_card)
 
         # Fetch dictionary content using structured lookup
         result = self.analysis_controller.lookup_selection()
@@ -207,13 +184,13 @@ class YomikataApp(QMainWindow):
         # Create cards from structured entries (in normal order)
         for entry in result.get("entries", []):
             card = CardFactory.create(entry)
-            self.card_stack.layout().addWidget(card)
+            self.window.card_stack.layout().addWidget(card)
 
         # Add stretch at the end
-        self.card_stack.layout().addStretch()
+        self.window.card_stack.layout().addStretch()
 
-        self.ai_btn.setEnabled(True)
-        self.edit_note_btn.setEnabled(True)
+        self.window.ai_btn.setEnabled(True)
+        self.window.edit_note_btn.setEnabled(True)
 
     def ask_ai(self):
         if not self.analysis_controller.selection_list:
@@ -222,12 +199,12 @@ class YomikataApp(QMainWindow):
         # Create details for the AI
         details = [f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})" for t in self.analysis_controller.selection_list]
         combined_text = "".join([t["surface"] for t in self.analysis_controller.selection_list])
-        context = self.input_area.toPlainText()
+        context = self.window.input_area.toPlainText()
         pos_list = ", ".join(set([t["pos"] for t in self.analysis_controller.selection_list]))
         components = "\n".join(details)
 
         # Get selected template
-        selected_template = self.ai_template.currentText()
+        selected_template = self.window.ai_template.currentText()
 
         # Fill in template placeholders
         prompt_data = {
@@ -238,37 +215,41 @@ class YomikataApp(QMainWindow):
         }
 
         self.log_debug(f"AI Prompt Sent (mode: {selected_template})")
-        self.progress_bar.setVisible(True)
-        self.ai_btn.setEnabled(False)
+        self.window.progress_bar.setVisible(True)
+        self.window.ai_btn.setEnabled(False)
 
         self.ai_controller.run_analysis(selected_template, prompt_data, self.on_ai_response, self.on_ai_error)
 
     def on_ai_response(self, response):
         self.log_debug(f"AI Response Received:\n{response}")
-        self.progress_bar.setVisible(False)
-        self.ai_btn.setEnabled(True)
+        self.window.progress_bar.setVisible(False)
+        self.window.ai_btn.setEnabled(True)
         self.last_ai_response = response
 
+        from ui.widgets.cards import LegacyCard
         # Display AI response as a card
         ai_card = LegacyCard("AI Notes", response)
-        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, ai_card)
-        self.save_ai_btn.setVisible(True)
+        self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, ai_card)
+        self.window.save_ai_btn.setVisible(True)
 
     def on_ai_error(self, err):
         self.log_debug(f"AI ERROR: {err}")
-        self.progress_bar.setVisible(False)
-        self.ai_btn.setEnabled(True)
+        self.window.progress_bar.setVisible(False)
+        self.window.ai_btn.setEnabled(True)
+        from ui.widgets.cards import LegacyCard
         error_card = LegacyCard("Error", err)
-        self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, error_card)
+        self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, error_card)
 
     def save_ai_to_dict(self):
         """Modified to save the COMBINED phrase, not just one word."""
         if self.analysis_controller.selection_list and hasattr(self, "last_ai_response"):
             combined_surface = "".join([t["surface"] for t in self.analysis_controller.selection_list])
             self.dict_service.save_personal_note(combined_surface, self.last_ai_response)
+
+            from ui.widgets.cards import LegacyCard
             success_card = LegacyCard("Personal Note", f"✓ Saved '{combined_surface}' to personal dictionary!")
-            self.card_stack.layout().insertWidget(self.card_stack.layout().count() - 1, success_card)
-            self.save_ai_btn.setVisible(False)
+            self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, success_card)
+            self.window.save_ai_btn.setVisible(False)
 
     def edit_note(self):
         """Open a dialog to manually edit the personal note for the selected word."""
@@ -281,7 +262,7 @@ class YomikataApp(QMainWindow):
         existing = self.dict_service.get_personal_note(combined_surface)
 
         text, ok = QInputDialog.getMultiLineText(
-            self,
+            self.window,
             "Edit Personal Note",
             f"Note for '{combined_surface}' (Markdown supported):",
             existing or "",
@@ -314,6 +295,7 @@ if __name__ == "__main__":
 
     if args.lookup:
         # CLI mode: lookup and print result
+        from core.database import DatabaseManager
         db = DatabaseManager()
         config = ConfigManager()
         extra_dicts = config.extra_dictionaries
@@ -323,6 +305,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     app = QApplication(sys.argv)
+    app.setOrganizationName("Yomikata")
+    app.setApplicationName("Settings")
 
     # Load custom fonts
     font_dir = os.path.join(os.path.dirname(__file__), "..", "fonts")
@@ -331,6 +315,6 @@ if __name__ == "__main__":
             if font_file.endswith(".ttf") or font_file.endswith(".otf"):
                 QFontDatabase.addApplicationFont(os.path.join(font_dir, font_file))
 
-    window = YomikataApp()
-    window.show()
+    app_instance = YomikataApp()
+    app_instance.window.show()
     sys.exit(app.exec())

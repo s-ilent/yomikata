@@ -353,7 +353,7 @@ class DatabaseManager:
         if lemma and lemma != word and lemma not in forms_to_try:
             forms_to_try.append(lemma)
 
-        for path in set(search_paths):
+        for path in dict.fromkeys(search_paths):
             if not os.path.exists(path):
                 continue
 
@@ -469,7 +469,7 @@ class DatabaseManager:
         if lemma and lemma != word and lemma not in forms_to_try:
             forms_to_try.append(lemma)
 
-        for path in set(search_paths):
+        for path in dict.fromkeys(search_paths):
             if not os.path.exists(path):
                 continue
 
@@ -536,7 +536,7 @@ class DatabaseManager:
         use_like_fallback = len(query) < 3
 
         search_paths = [self.main_db] + (extra_paths or [])
-        for path in set(search_paths):
+        for path in dict.fromkeys(search_paths):
             if not os.path.exists(path):
                 continue
 

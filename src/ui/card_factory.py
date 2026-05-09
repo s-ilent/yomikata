@@ -1,5 +1,5 @@
-from style import CATPPUCCIN_MOCHA as CAT
-from widgets import (
+from ui.style import CATPPUCCIN_MOCHA as CAT
+from ui.widgets.widgets import (
     JMDictCard,
     JMnedictCard,
     LegacyCard,

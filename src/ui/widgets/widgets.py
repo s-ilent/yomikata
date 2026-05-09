@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.database import import_dictionary_file, import_yomitan_zip
-from style import CATPPUCCIN_MOCHA as CAT
+from ui.style import CATPPUCCIN_MOCHA as CAT
 
 
 class ImportWorker(QThread):

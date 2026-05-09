@@ -32,7 +32,7 @@ from core.database import (
     export_personal_dict,
     import_personal_dict,
 )
-from widgets import ImportWorker
+from ui.widgets.widgets import ImportWorker
 
 
 class SettingsDialog(QDialog):

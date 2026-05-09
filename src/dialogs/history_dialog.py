@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from style import CATPPUCCIN_MOCHA as CAT
+from ui.style import CATPPUCCIN_MOCHA as CAT
 
 
 class HistoryDialog(QDialog):

@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from flow_layout import FlowLayout
-from style import build_stylesheet
-from widgets import (
+from ui.layouts.flow_layout import FlowLayout
+from ui.style import build_stylesheet
+from ui.widgets.widgets import (
     DictionaryCardStack,
 )
 

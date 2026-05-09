@@ -20,10 +20,10 @@ from core.processor import TextProcessor
 from services.ai_service import AIService
 from services.dictionary_service import DictionaryService
 from services.history_service import HistoryService
-from style import build_stylesheet, get_font_size
+from ui.style import build_stylesheet, get_font_size
 from ui.card_factory import CardFactory
 from ui.main_window import YomikataUI
-from widgets import (
+from ui.widgets.widgets import (
     LegacyCard,
     PunctuationWidget,
     TokenWidget,

@@ -23,11 +23,13 @@ from services.history_service import HistoryService
 from ui.style import build_stylesheet, get_font_size
 from ui.card_factory import CardFactory
 from ui.main_window import YomikataUI
-from ui.widgets.widgets import (
+from ui.widgets.cards import (
     LegacyCard,
+    WordHeaderCard,
+)
+from ui.widgets.token_widgets import (
     PunctuationWidget,
     TokenWidget,
-    WordHeaderCard,
 )
 
 

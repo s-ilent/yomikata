@@ -115,9 +115,10 @@ class YomikataApp(QObject):
         self.config.font_size = size
         # Re-using internal main window styling
         from ui.style import build_stylesheet
+
         self.window.setStyleSheet(build_stylesheet(font_base=size))
         # Update token display sizes
-        # self._update_token_font_sizes()
+        self._update_token_font_sizes()
 
     def log_debug(self, message):
         timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
@@ -156,6 +157,7 @@ class YomikataApp(QObject):
                 child.widget().deleteLater()
 
         from ui.widgets.cards import LegacyCard
+
         search_card = LegacyCard(f"Search: {query}", results if results else "No matches found.")
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, search_card)
 
@@ -174,6 +176,7 @@ class YomikataApp(QObject):
                 child.widget().deleteLater()
 
         from ui.widgets.cards import WordHeaderCard
+
         # Add word header card
         header_card = WordHeaderCard(combined_surface, combined_kana, combined_romaji, lemma_list, pos_list)
         self.window.card_stack.layout().addWidget(header_card)
@@ -197,7 +200,10 @@ class YomikataApp(QObject):
             return
 
         # Create details for the AI
-        details = [f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})" for t in self.analysis_controller.selection_list]
+        details = [
+            f"Token: {t['surface']} (Reading: {t['kana']}, POS: {t['pos']})"
+            for t in self.analysis_controller.selection_list
+        ]
         combined_text = "".join([t["surface"] for t in self.analysis_controller.selection_list])
         context = self.window.input_area.toPlainText()
         pos_list = ", ".join(set([t["pos"] for t in self.analysis_controller.selection_list]))
@@ -227,6 +233,7 @@ class YomikataApp(QObject):
         self.last_ai_response = response
 
         from ui.widgets.cards import LegacyCard
+
         # Display AI response as a card
         ai_card = LegacyCard("AI Notes", response)
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, ai_card)
@@ -237,6 +244,7 @@ class YomikataApp(QObject):
         self.window.progress_bar.setVisible(False)
         self.window.ai_btn.setEnabled(True)
         from ui.widgets.cards import LegacyCard
+
         error_card = LegacyCard("Error", err)
         self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, error_card)
 
@@ -247,6 +255,7 @@ class YomikataApp(QObject):
             self.dict_service.save_personal_note(combined_surface, self.last_ai_response)
 
             from ui.widgets.cards import LegacyCard
+
             success_card = LegacyCard("Personal Note", f"✓ Saved '{combined_surface}' to personal dictionary!")
             self.window.card_stack.layout().insertWidget(self.window.card_stack.layout().count() - 1, success_card)
             self.window.save_ai_btn.setVisible(False)
@@ -296,6 +305,7 @@ if __name__ == "__main__":
     if args.lookup:
         # CLI mode: lookup and print result
         from core.database import DatabaseManager
+
         db = DatabaseManager()
         config = ConfigManager()
         extra_dicts = config.extra_dictionaries
